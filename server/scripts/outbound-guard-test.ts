@@ -11,7 +11,7 @@ import { seedIfEmpty } from './seed-data.js';
 await migrate();
 await seedIfEmpty();
 
-const REAL_CONTACT = '+924235990034'; // a genuine number from the imported CSV
+const REAL_CONTACT = '+924200000000'; // a genuine number from the imported CSV
 const MY_TEST_NUMBER = '+923001112222';
 
 let failures = 0;
@@ -48,24 +48,24 @@ delete process.env.WHATSAPP_PHONE_ID;
 
 console.log('\n--- mode: redirect ---');
 process.env.OUTBOUND_MODE = 'redirect';
-process.env.OUTBOUND_REDIRECT_TO = 'i221855@nu.edu.pk';
+process.env.OUTBOUND_REDIRECT_TO = 'you@example.com';
 
-const routed = resolveRecipient('contact', 'adeel.javaid@descon.com', 'Original invite text.');
-check('recipient is rewritten to the test inbox', routed.toAddr, 'i221855@nu.edu.pk');
+const routed = resolveRecipient('contact', 'contact@example-industries.test', 'Original invite text.');
+check('recipient is rewritten to the test inbox', routed.toAddr, 'you@example.com');
 check('redirect is flagged', routed.redirected, true);
-check('body carries a banner naming the real recipient', routed.body.includes('adeel.javaid@descon.com'), true);
+check('body carries a banner naming the real recipient', routed.body.includes('contact@example-industries.test'), true);
 check('banner states the contact was not messaged', routed.body.includes('was NOT messaged'), true);
 
 const redirectedId = await notify({
   channel: 'email', template: 'test', recipientType: 'contact',
-  toAddr: 'adeel.javaid@descon.com', subject: 'Meeting confirmation', body: 'Original invite text.',
+  toAddr: 'contact@example-industries.test', subject: 'Meeting confirmation', body: 'Original invite text.',
 });
 const stored = await db.prepare('SELECT to_addr, subject FROM notification WHERE id = ?').get(redirectedId) as any;
-check('the OUTBOX ROW stores the test inbox, not the company', stored.to_addr, 'i221855@nu.edu.pk');
+check('the OUTBOX ROW stores the test inbox, not the company', stored.to_addr, 'you@example.com');
 check('subject is marked as a test', stored.subject.startsWith('[TEST]'), true);
 check(
   'no row anywhere is addressed to the real company',
-  (await db.prepare("SELECT COUNT(*) AS n FROM notification WHERE to_addr LIKE '%descon.com'").get() as any).n,
+  (await db.prepare("SELECT COUNT(*) AS n FROM notification WHERE to_addr LIKE '%example-industries.test'").get() as any).n,
   0,
 );
 check('a salesman message is NOT redirected', resolveRecipient('salesman', null, 'hi').redirected, false);

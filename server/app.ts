@@ -89,6 +89,20 @@ export function createApp(): Express {
           return res.json(await runReminderSweep('cron'));
         case 'followups':
           return res.json(await runFollowUpSweep('cron'));
+        /*
+         * Vercel's Hobby plan allows two cron jobs, each at most once a day.
+         * `daily` bundles the two sweeps into one of those slots.
+         *
+         * Reminders really want to run every 15 minutes, so that they fire
+         * near each meeting's own time rather than in a single daily batch.
+         * Once a day is a real downgrade — point an external scheduler at
+         * /api/cron/reminders to get the intended behaviour back.
+         */
+        case 'daily': {
+          const reminders = await runReminderSweep('cron');
+          const followups = await runFollowUpSweep('cron');
+          return res.json({ reminders, followups });
+        }
         default:
           throw new HttpError(404, `Unknown job "${req.params.job}"`);
       }

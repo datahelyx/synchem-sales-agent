@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS company (
   name_key         TEXT    NOT NULL,              -- normalized, for dedupe on re-import
   area             TEXT,                          -- CSV "City" is really a Lahore locality
   phone            TEXT,                          -- as supplied, e.g. 0321-4004998
-  phone_e164       TEXT,                          -- +923214004998, for wa.me / tel:
+  phone_e164       TEXT,                          -- +923000000000, for wa.me / tel:
   email            TEXT,
   industry         TEXT,                          -- normalized bucket
   industry_raw     TEXT,                          -- exactly what the CSV said

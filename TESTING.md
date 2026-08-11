@@ -31,7 +31,7 @@ npm run import:csv -- "C:\Users\laiba\Desktop\SynChem_Companies_for_Odoo_v2.csv"
 Then `npm run dev` again.
 
 **Where test emails land:** everything aimed at a company is redirected to
-`lm4442172@gmail.com`. Keep that inbox open in a tab — several steps check it.
+`you@example.com`. Keep that inbox open in a tab — several steps check it.
 
 ---
 

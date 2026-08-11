@@ -32,7 +32,7 @@ and seeded on first start. No accounts, no cloud services, no credentials requir
 > | `allowlist` | only addresses in `OUTBOUND_ALLOWLIST` are reachable |
 > | `live` | real customers are contacted |
 >
-> This checkout is configured for `redirect` → `i221855@nu.edu.pk`. WhatsApp has a
+> This checkout is configured for `redirect` → `you@example.com`. WhatsApp has a
 > separate `OUTBOUND_REDIRECT_PHONE`, because an email inbox cannot receive a
 > WhatsApp message; while it is unset, WhatsApp to companies is held rather than
 > rerouted somewhere useless.
@@ -214,9 +214,9 @@ credentials to `.env` — no password belongs in this repo, so add these yoursel
 ```
 SMTP_HOST=smtp.office365.com
 SMTP_PORT=587
-SMTP_USER=i221855@nu.edu.pk
+SMTP_USER=you@example.com
 SMTP_PASS=<an app password, not your normal login password>
-SMTP_FROM=i221855@nu.edu.pk
+SMTP_FROM=you@example.com
 ```
 
 Most university and Gmail accounts require an **app password** generated in your
