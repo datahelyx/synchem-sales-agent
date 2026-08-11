@@ -343,7 +343,7 @@ export function Calendar() {
                       {new Date(m.scheduled_at).toLocaleString('en-PK', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <Link to={`/companies/${m.company_id}`} className="text-sm font-medium text-slate-800 hover:text-brand-700">
+                      <Link to={`/companies/${m.company_id}`} className="text-sm font-medium text-slate-800 transition-colors hover:text-accent-600">
                         {isManager && !mineOnly ? `${m.salesman_name} × ${m.company_name}` : m.company_name}
                       </Link>
                       {(m.location || m.area) && (

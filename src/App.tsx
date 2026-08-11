@@ -108,7 +108,9 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             to={to}
             className={({ isActive }) =>
               `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                isActive ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                isActive
+                  ? 'border-l-[3px] border-accent-500 bg-brand-50 pl-[9px] text-brand-700'
+                  : 'border-l-[3px] border-transparent pl-[9px] text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`
             }
           >

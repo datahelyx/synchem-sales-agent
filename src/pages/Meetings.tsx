@@ -93,7 +93,7 @@ export function Meetings() {
             return (
               <li key={m.id} className="card flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
-                  <Link to={`/companies/${m.company_id}`} className="text-sm font-semibold text-slate-900 hover:text-brand-700">
+                  <Link to={`/companies/${m.company_id}`} className="text-sm font-semibold text-slate-900 transition-colors hover:text-accent-600">
                     {m.company_name}
                   </Link>
                   <p className="mt-0.5 text-sm text-slate-600">{dateTime(m.scheduled_at)} · {m.duration_min} min · {m.mode}</p>

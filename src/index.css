@@ -16,9 +16,26 @@
   }
 }
 
+@layer base {
+  /*
+   * SynChem's red is the third colour in their mark. It is used here for
+   * interaction — focus, hover, the active rail — rather than for state, so it
+   * never collides with the rose already meaning "error".
+   */
+  :focus-visible {
+    outline: 2px solid theme('colors.accent.500');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
 @layer components {
   .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-card;
+    @apply rounded-xl border border-slate-200 bg-white shadow-card transition-colors;
+  }
+  /* Rows and cards you can act on warm to red on hover. */
+  .row-hover {
+    @apply transition-colors hover:bg-accent-50/60;
   }
   /* 44px minimum on phones — salesmen use this one-handed in the field, and a
      38px target is a mis-tap waiting to happen. Desktop keeps the tighter size. */
@@ -30,7 +47,7 @@
     @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
   }
   .btn-ghost {
-    @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+    @apply btn border border-slate-200 bg-white text-slate-700 hover:border-accent-300 hover:bg-accent-50/50 hover:text-accent-700;
   }
   .btn-subtle {
     @apply btn bg-slate-100 text-slate-700 hover:bg-slate-200;

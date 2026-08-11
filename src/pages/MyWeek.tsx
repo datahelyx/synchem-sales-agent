@@ -171,7 +171,7 @@ function CompanyCard({
       <span className={`absolute inset-y-0 left-0 w-1.5 ${accent}`} aria-hidden />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <Link to={`/companies/${row.company_id}`} className="block truncate text-base font-semibold text-slate-900 hover:text-brand-700">
+          <Link to={`/companies/${row.company_id}`} className="block truncate text-base font-semibold text-slate-900 transition-colors hover:text-accent-600">
             {row.company_name}
           </Link>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

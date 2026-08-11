@@ -135,9 +135,9 @@ export function Companies() {
                     const stageMeta = STAGE_META[c.stage] ?? STAGE_META.new;
                     const quality = qualityLabel(c.data_quality);
                     return (
-                      <tr key={c.id} className="hover:bg-slate-50">
+                      <tr key={c.id} className="row-hover">
                         <td className="px-4 py-2.5">
-                          <Link to={`/companies/${c.id}`} className="font-medium text-slate-800 hover:text-brand-700">
+                          <Link to={`/companies/${c.id}`} className="font-medium text-slate-800 transition-colors hover:text-accent-600">
                             {c.name}
                           </Link>
                           <div className="mt-0.5 flex flex-wrap gap-1">
