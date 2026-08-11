@@ -13,8 +13,8 @@ import { workRouter } from './routes/work.js';
 import { seedIfEmpty } from './scripts/seed-data.js';
 import { STAGE_LABELS, STAGES } from './services/pipeline.js';
 
-migrate();
-seedIfEmpty();
+await migrate();
+await seedIfEmpty();
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));

@@ -258,7 +258,7 @@ export async function notify(msg: OutboundMessage): Promise<number> {
   const subject = routed.redirected ? `[TEST] ${msg.subject ?? ''}`.trim() : msg.subject ?? null;
   const outgoing: OutboundMessage = { ...msg, toAddr: routed.toAddr, body: routed.body, subject };
 
-  const row = db
+  const row = await db
     .prepare(
       `INSERT INTO notification (channel, template, recipient_type, recipient_id, to_addr, subject, body, payload_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -282,7 +282,7 @@ export async function notify(msg: OutboundMessage): Promise<number> {
   // Never hand a real company contact to an adapter unless explicitly enabled.
   const blocked = blockReason(outgoing.recipientType, msg.toAddr, outgoing.channel);
   if (blocked) {
-    db.prepare(`UPDATE notification SET status = 'suppressed', error = ? WHERE id = ?`).run(blocked, id);
+    await db.prepare(`UPDATE notification SET status = 'suppressed', error = ? WHERE id = ?`).run(blocked, id);
     return id;
   }
 
@@ -292,10 +292,10 @@ export async function notify(msg: OutboundMessage): Promise<number> {
   try {
     const sent = await adapter.send({ ...outgoing, id });
     if (sent) {
-      db.prepare(`UPDATE notification SET status = 'sent', sent_at = datetime('now') WHERE id = ?`).run(id);
+      await db.prepare(`UPDATE notification SET status = 'sent', sent_at = datetime('now') WHERE id = ?`).run(id);
     }
   } catch (err) {
-    db.prepare(`UPDATE notification SET status = 'failed', error = ? WHERE id = ?`).run(String(err), id);
+    await db.prepare(`UPDATE notification SET status = 'failed', error = ? WHERE id = ?`).run(String(err), id);
   }
   return id;
 }
@@ -312,7 +312,7 @@ async function rebuildAttachments(row: any): Promise<Attachment[] | undefined> {
   if (!meetingId) return undefined;
 
   const { icsForMeeting } = await import('./calendar.js');
-  const ics = icsForMeeting(meetingId, { method: 'REQUEST' });
+  const ics = await icsForMeeting(meetingId, { method: 'REQUEST' });
   if (!ics) return undefined;
   return [{ filename: 'invite.ics', content: ics, contentType: 'text/calendar; charset=utf-8; method=REQUEST' }];
 }
@@ -326,7 +326,7 @@ async function rebuildAttachments(row: any): Promise<Attachment[] | undefined> {
  * every attempt anyway, in case the mode was tightened since.
  */
 export async function drainOutbox(limit = 50) {
-  const rows = db
+  const rows = await db
     .prepare(`SELECT * FROM notification WHERE status IN ('queued','failed') ORDER BY id LIMIT ?`)
     .all(limit) as any[];
 
@@ -335,7 +335,7 @@ export async function drainOutbox(limit = 50) {
   for (const r of rows) {
     const reason = blockReason(r.recipient_type as RecipientType, r.to_addr, r.channel as Channel);
     if (reason) {
-      db.prepare(`UPDATE notification SET status = 'suppressed', error = ? WHERE id = ?`).run(reason, r.id);
+      await db.prepare(`UPDATE notification SET status = 'suppressed', error = ? WHERE id = ?`).run(reason, r.id);
       blocked++;
       continue;
     }
@@ -354,11 +354,11 @@ export async function drainOutbox(limit = 50) {
         attachments,
       });
       if (ok) {
-        db.prepare(`UPDATE notification SET status = 'sent', sent_at = datetime('now'), error = NULL WHERE id = ?`).run(r.id);
+        await db.prepare(`UPDATE notification SET status = 'sent', sent_at = datetime('now'), error = NULL WHERE id = ?`).run(r.id);
         sent++;
       }
     } catch (err) {
-      db.prepare(`UPDATE notification SET status = 'failed', error = ? WHERE id = ?`).run(String(err), r.id);
+      await db.prepare(`UPDATE notification SET status = 'failed', error = ? WHERE id = ?`).run(String(err), r.id);
     }
   }
   return { attempted: rows.length, sent, blocked };

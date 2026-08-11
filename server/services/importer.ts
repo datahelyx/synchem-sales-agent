@@ -202,7 +202,7 @@ const UPDATE_SQL = `
   WHERE name_key = @name_key
 `;
 
-export function importCompanies(buf: Buffer, filename: string, opts: { dryRun?: boolean } = {}): ImportSummary {
+export async function importCompanies(buf: Buffer, filename: string, opts: { dryRun?: boolean } = {}): Promise<ImportSummary> {
   const { encoding, rows } = parseCompanyCsv(buf);
   const warnings: ImportSummary['warnings'] = [];
   let inserted = 0;
@@ -210,7 +210,7 @@ export function importCompanies(buf: Buffer, filename: string, opts: { dryRun?: 
   let skipped = 0;
 
   const existing = new Set<string>(
-    db.prepare('SELECT name_key FROM company').all().map((r: any) => r.name_key as string),
+    (await db.prepare('SELECT name_key FROM company').all()).map((r: any) => r.name_key as string),
   );
   // A file can contain the same company twice; the second one is an update.
   const seen = new Set<string>();
@@ -231,8 +231,8 @@ export function importCompanies(buf: Buffer, filename: string, opts: { dryRun?: 
   let batchId: number | null = null;
 
   if (!opts.dryRun) {
-    tx(() => {
-      const batch = db
+    await tx(async () => {
+      const batch = await db
         .prepare(
           `INSERT INTO import_batch (filename, encoding, rows_read, inserted, updated, skipped, warnings_json)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,

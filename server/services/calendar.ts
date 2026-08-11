@@ -49,8 +49,8 @@ export interface IcsOptions {
   alarms?: number[];
 }
 
-export function icsForMeeting(meetingId: number, opts: IcsOptions = { method: 'REQUEST' }): string | null {
-  const m = db
+export async function icsForMeeting(meetingId: number, opts: IcsOptions = { method: 'REQUEST' }): Promise<string | null> {
+  const m = await db
     .prepare(
       `SELECT m.*, c.name AS company_name, c.area, c.email AS company_email,
               c.contact_name, c.contact_title, c.phone_e164,
@@ -129,8 +129,8 @@ export function icsForMeeting(meetingId: number, opts: IcsOptions = { method: 'R
 }
 
 /** Bump SEQUENCE so a re-sent invite supersedes the previous one. */
-export function bumpIcsSequence(meetingId: number) {
-  db.prepare(
+export async function bumpIcsSequence(meetingId: number) {
+  await db.prepare(
     `UPDATE meeting SET ics_sequence = COALESCE(ics_sequence, 0) + 1, updated_at = datetime('now') WHERE id = ?`,
   ).run(meetingId);
 }

@@ -12,7 +12,7 @@ export const dashboardRouter = Router();
  */
 dashboardRouter.get(
   '/dashboard',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const days = Math.min(365, Math.max(7, Number(req.query.days) || 90));
     const since = addDays(today(), -days);
     const week = weekStart();
@@ -21,31 +21,31 @@ dashboardRouter.get(
     const mineFeedback = salesmanId ? 'AND f.salesman_id = @sid' : '';
     const p = { since, week, sid: salesmanId };
 
-    const scalar = (sql: string) => (db.prepare(sql).get(p) as any)?.n ?? 0;
+    const scalar = async (sql: string) => (await db.prepare(sql).get(p) as any)?.n ?? 0;
 
     const totals = {
-      companies: scalar('SELECT COUNT(*) AS n FROM company'),
-      contactable: scalar('SELECT COUNT(*) AS n FROM company WHERE phone_e164 IS NOT NULL OR email IS NOT NULL'),
-      inPlay: scalar(`SELECT COUNT(*) AS n FROM company WHERE stage NOT IN ('new','won','lost')`),
-      assignedThisWeek: scalar('SELECT COUNT(*) AS n FROM assignment WHERE week_start = @week'),
-      meetingsUpcoming: scalar(
+      companies: await scalar('SELECT COUNT(*) AS n FROM company'),
+      contactable: await scalar('SELECT COUNT(*) AS n FROM company WHERE phone_e164 IS NOT NULL OR email IS NOT NULL'),
+      inPlay: await scalar(`SELECT COUNT(*) AS n FROM company WHERE stage NOT IN ('new','won','lost')`),
+      assignedThisWeek: await scalar('SELECT COUNT(*) AS n FROM assignment WHERE week_start = @week'),
+      meetingsUpcoming: await scalar(
         `SELECT COUNT(*) AS n FROM meeting m WHERE m.status = 'scheduled' AND datetime(m.scheduled_at) >= datetime('now') ${mineMeeting}`,
       ),
-      meetingsHeld: scalar(
+      meetingsHeld: await scalar(
         `SELECT COUNT(*) AS n FROM meeting m WHERE m.status = 'held' AND date(m.scheduled_at) >= @since ${mineMeeting}`,
       ),
-      feedbackPending: scalar(
+      feedbackPending: await scalar(
         `SELECT COUNT(*) AS n FROM meeting m LEFT JOIN feedback f ON f.meeting_id = m.id
           WHERE f.id IS NULL AND datetime(m.scheduled_at) < datetime('now')
             AND m.status IN ('scheduled','held') ${mineMeeting}`,
       ),
-      dealsWon: scalar(
+      dealsWon: await scalar(
         `SELECT COUNT(*) AS n FROM feedback f WHERE f.outcome = 'approved' AND date(f.created_at) >= @since ${mineFeedback}`,
       ),
-      samplesOut: scalar(`SELECT COUNT(*) AS n FROM sample_request WHERE status IN ('draft','dispatched')`),
+      samplesOut: await scalar(`SELECT COUNT(*) AS n FROM sample_request WHERE status IN ('draft','dispatched')`),
     };
 
-    const revenueRow = db
+    const revenueRow = await db
       .prepare(
         `SELECT COALESCE(SUM(i.total), 0) AS total, COUNT(*) AS n
            FROM invoice i WHERE i.status <> 'cancelled' AND date(i.issue_date) >= @since
@@ -63,14 +63,14 @@ dashboardRouter.get(
       totals: { ...totals, revenue: revenueRow.total, invoices: revenueRow.n, conversionPct: conversion },
 
       // Feedback split — the brief's "feedback charts".
-      outcomes: db
+      outcomes: await db
         .prepare(
           `SELECT f.outcome, COUNT(*) AS n FROM feedback f WHERE date(f.created_at) >= @since ${mineFeedback}
             GROUP BY f.outcome`,
         )
         .all(p),
 
-      rejectionReasons: db
+      rejectionReasons: await db
         .prepare(
           `SELECT COALESCE(rc.label, f.reason_code, 'Not given') AS label, COUNT(*) AS n
              FROM feedback f LEFT JOIN reason_code rc ON rc.code = f.reason_code AND rc.outcome = f.outcome
@@ -79,7 +79,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      pipeline: db
+      pipeline: await db
         .prepare(
           `SELECT stage, COUNT(*) AS n FROM company
             WHERE stage <> 'new' ${salesmanId ? 'AND owner_id = @sid' : ''} GROUP BY stage`,
@@ -87,7 +87,7 @@ dashboardRouter.get(
         .all(p),
 
       // Weekly trend: meetings held vs deals won, by ISO week.
-      trend: db
+      trend: await db
         .prepare(
           `WITH weeks AS (
              SELECT DISTINCT date(m.scheduled_at, 'weekday 0', '-6 day') AS wk
@@ -108,7 +108,7 @@ dashboardRouter.get(
         .all(p),
 
       // Per-salesman leaderboard, all live.
-      bySalesman: db
+      bySalesman: await db
         .prepare(
           `SELECT s.id, s.name,
                   (SELECT COUNT(*) FROM assignment a WHERE a.salesman_id = s.id AND a.week_start = @week) AS assigned,
@@ -124,7 +124,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      topIndustries: db
+      topIndustries: await db
         .prepare(
           `SELECT COALESCE(c.industry, 'Unknown') AS industry, COUNT(*) AS meetings,
                   SUM(CASE WHEN f.outcome = 'approved' THEN 1 ELSE 0 END) AS won
@@ -135,7 +135,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      upcoming: db
+      upcoming: await db
         .prepare(
           `SELECT m.id, m.scheduled_at, m.mode, m.status, c.name AS company_name, c.area,
                   s.name AS salesman_name, c.contact_name, c.contact_title
@@ -145,7 +145,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      needsFeedback: db
+      needsFeedback: await db
         .prepare(
           `SELECT m.id, m.scheduled_at, c.name AS company_name, s.name AS salesman_name, m.salesman_id
              FROM meeting m JOIN company c ON c.id = m.company_id JOIN salesman s ON s.id = m.salesman_id
@@ -156,7 +156,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      followUps: db
+      followUps: await db
         .prepare(
           `SELECT c.id, c.name, c.follow_up_on, c.stage, s.name AS owner_name
              FROM company c LEFT JOIN salesman s ON s.id = c.owner_id
@@ -166,7 +166,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      recentActivity: db
+      recentActivity: await db
         .prepare(
           `SELECT a.*, c.name AS company_name, s.name AS salesman_name
              FROM activity a LEFT JOIN company c ON c.id = a.company_id LEFT JOIN salesman s ON s.id = a.salesman_id
@@ -175,7 +175,7 @@ dashboardRouter.get(
         )
         .all(p),
 
-      dataHealth: db
+      dataHealth: await db
         .prepare(
           `SELECT
              (SELECT COUNT(*) FROM company WHERE phone_e164 IS NULL AND email IS NULL) AS unreachable,

@@ -37,8 +37,8 @@ export interface ActivityInput {
   actor?: 'agent' | 'salesman' | 'manager';
 }
 
-export function logActivity(a: ActivityInput) {
-  db.prepare(
+export async function logActivity(a: ActivityInput) {
+  await db.prepare(
     `INSERT INTO activity (company_id, salesman_id, kind, summary, detail_json, actor)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
@@ -68,18 +68,18 @@ const ORDER: Record<Stage, number> = {
   on_hold: 1,
 };
 
-export function setStage(companyId: number, stage: Stage, opts: { force?: boolean; actor?: ActivityInput['actor']; salesmanId?: number | null } = {}) {
-  const current = (db.prepare('SELECT stage FROM company WHERE id = ?').get(companyId) as any)?.stage as Stage | undefined;
+export async function setStage(companyId: number, stage: Stage, opts: { force?: boolean; actor?: ActivityInput['actor']; salesmanId?: number | null } = {}) {
+  const current = (await db.prepare('SELECT stage FROM company WHERE id = ?').get(companyId) as any)?.stage as Stage | undefined;
   if (!current) return;
   if (current === stage) return;
   // Automated transitions never walk a company backwards; humans may.
   if (!opts.force && ORDER[stage] < ORDER[current] && current !== 'on_hold') return;
 
-  db.prepare(`UPDATE company SET stage = ?, last_touched_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
+  await db.prepare(`UPDATE company SET stage = ?, last_touched_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(
     stage,
     companyId,
   );
-  logActivity({
+  await logActivity({
     companyId,
     salesmanId: opts.salesmanId ?? null,
     kind: 'stage_change',
@@ -89,8 +89,8 @@ export function setStage(companyId: number, stage: Stage, opts: { force?: boolea
   });
 }
 
-export function recordRevision(entity: string, entityId: number, before: unknown, after: unknown, changedBy?: number | null) {
-  db.prepare(
+export async function recordRevision(entity: string, entityId: number, before: unknown, after: unknown, changedBy?: number | null) {
+  await db.prepare(
     `INSERT INTO revision (entity, entity_id, changed_by, before_json, after_json) VALUES (?, ?, ?, ?, ?)`,
   ).run(entity, entityId, changedBy ?? null, JSON.stringify(before), JSON.stringify(after));
 }

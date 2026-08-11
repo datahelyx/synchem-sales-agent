@@ -42,25 +42,25 @@ export function googleConfig() {
  * Without this, anyone could complete the callback and bind their own Google
  * account to another salesman's row.
  */
-function stateSecret(): string {
-  const row = db.prepare(`SELECT value FROM setting WHERE key = 'oauth_state_secret'`).get() as any;
+async function stateSecret(): Promise<string> {
+  const row = await db.prepare(`SELECT value FROM setting WHERE key = 'oauth_state_secret'`).get() as any;
   if (row?.value) return row.value;
   const secret = crypto.randomBytes(32).toString('hex');
-  db.prepare(`INSERT INTO setting (key, value) VALUES ('oauth_state_secret', ?)`).run(secret);
+  await db.prepare(`INSERT INTO setting (key, value) VALUES ('oauth_state_secret', ?)`).run(secret);
   return secret;
 }
 
-function signState(salesmanId: number): string {
+async function signState(salesmanId: number): Promise<string> {
   const payload = `${salesmanId}.${Date.now()}`;
-  const sig = crypto.createHmac('sha256', stateSecret()).update(payload).digest('hex').slice(0, 32);
+  const sig = crypto.createHmac('sha256', await stateSecret()).update(payload).digest('hex').slice(0, 32);
   return Buffer.from(`${payload}.${sig}`).toString('base64url');
 }
 
-export function verifyState(state: string): number | null {
+export async function verifyState(state: string): Promise<number | null> {
   try {
     const raw = Buffer.from(state, 'base64url').toString('utf8');
     const [id, ts, sig] = raw.split('.');
-    const expect = crypto.createHmac('sha256', stateSecret()).update(`${id}.${ts}`).digest('hex').slice(0, 32);
+    const expect = crypto.createHmac('sha256', await stateSecret()).update(`${id}.${ts}`).digest('hex').slice(0, 32);
     if (!sig || sig.length !== expect.length) return null;
     if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
     if (Date.now() - Number(ts) > 15 * 60_000) return null; // 15-minute window
@@ -70,7 +70,7 @@ export function verifyState(state: string): number | null {
   }
 }
 
-export function authUrl(salesmanId: number): string | null {
+export async function authUrl(salesmanId: number): Promise<string | null> {
   const { clientId, redirectUri, configured } = googleConfig();
   if (!configured) return null;
   const u = new URL(AUTH_URL);
@@ -81,7 +81,7 @@ export function authUrl(salesmanId: number): string | null {
   u.searchParams.set('access_type', 'offline');   // we need a refresh token
   u.searchParams.set('prompt', 'consent');        // force one, even on re-connect
   u.searchParams.set('include_granted_scopes', 'true');
-  u.searchParams.set('state', signState(salesmanId));
+  u.searchParams.set('state', await signState(salesmanId));
   return u.toString();
 }
 
@@ -127,7 +127,7 @@ export async function exchangeCode(code: string, salesmanId: number) {
   });
 
   const expiresAt = new Date(Date.now() + (tok.expires_in - 60) * 1000).toISOString();
-  db.prepare(
+  await db.prepare(
     `INSERT INTO google_account (salesman_id, google_email, access_token, refresh_token, expires_at, scope, last_error, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, NULL, datetime('now'))
      ON CONFLICT(salesman_id) DO UPDATE SET
@@ -151,13 +151,13 @@ export async function exchangeCode(code: string, salesmanId: number) {
   return { email: emailFromIdToken(tok.id_token) };
 }
 
-export function googleAccount(salesmanId: number): any | null {
-  return db.prepare('SELECT * FROM google_account WHERE salesman_id = ?').get(salesmanId) ?? null;
+export async function googleAccount(salesmanId: number): Promise<any | null> {
+  return await db.prepare('SELECT * FROM google_account WHERE salesman_id = ?').get(salesmanId) ?? null;
 }
 
 /** A valid access token, refreshing when the stored one has expired. */
 async function accessTokenFor(salesmanId: number): Promise<string | null> {
-  const acct = googleAccount(salesmanId);
+  const acct = await googleAccount(salesmanId);
   if (!acct?.refresh_token && !acct?.access_token) return null;
 
   const stillValid = acct.expires_at && new Date(acct.expires_at).getTime() > Date.now();
@@ -173,22 +173,22 @@ async function accessTokenFor(salesmanId: number): Promise<string | null> {
       grant_type: 'refresh_token',
     });
     const expiresAt = new Date(Date.now() + (tok.expires_in - 60) * 1000).toISOString();
-    db.prepare(
+    await db.prepare(
       `UPDATE google_account SET access_token = ?, expires_at = ?, last_error = NULL, updated_at = datetime('now')
         WHERE salesman_id = ?`,
     ).run(tok.access_token, expiresAt, salesmanId);
     return tok.access_token;
   } catch (err) {
     // A revoked or expired refresh token is a disconnect, not a transient error.
-    db.prepare(`UPDATE google_account SET last_error = ?, updated_at = datetime('now') WHERE salesman_id = ?`)
+    await db.prepare(`UPDATE google_account SET last_error = ?, updated_at = datetime('now') WHERE salesman_id = ?`)
       .run(`Reconnect needed: ${(err as Error).message}`, salesmanId);
     return null;
   }
 }
 
-export function disconnect(salesmanId: number) {
-  db.prepare('DELETE FROM google_account WHERE salesman_id = ?').run(salesmanId);
-  db.prepare('UPDATE meeting SET google_event_id = NULL WHERE salesman_id = ?').run(salesmanId);
+export async function disconnect(salesmanId: number) {
+  await db.prepare('DELETE FROM google_account WHERE salesman_id = ?').run(salesmanId);
+  await db.prepare('UPDATE meeting SET google_event_id = NULL WHERE salesman_id = ?').run(salesmanId);
 }
 
 /* ----------------------------------------------------------------- events */
@@ -227,8 +227,8 @@ function eventBody(m: any) {
   };
 }
 
-function meetingForSync(meetingId: number) {
-  return db
+async function meetingForSync(meetingId: number) {
+  return await db
     .prepare(
       `SELECT m.*, c.name AS company_name, c.area, c.contact_name, c.contact_title, c.phone_e164
          FROM meeting m JOIN company c ON c.id = m.company_id WHERE m.id = ?`,
@@ -256,14 +256,14 @@ export interface SyncResult {
 
 /** Create or update the meeting on the salesman's Google Calendar. */
 export async function pushMeeting(meetingId: number): Promise<SyncResult> {
-  const m = meetingForSync(meetingId);
+  const m = await meetingForSync(meetingId);
   if (!m) return { synced: false, reason: 'Meeting not found' };
   if (!googleConfig().configured) return { synced: false, reason: 'Google is not configured' };
 
   const token = await accessTokenFor(m.salesman_id);
   if (!token) return { synced: false, reason: 'This salesman has not connected Google Calendar' };
 
-  const acct = googleAccount(m.salesman_id);
+  const acct = await googleAccount(m.salesman_id);
   const calId = encodeURIComponent(acct?.calendar_id ?? 'primary');
 
   try {
@@ -279,28 +279,28 @@ export async function pushMeeting(meetingId: number): Promise<SyncResult> {
         body: JSON.stringify(eventBody(m)),
       });
     }
-    db.prepare(`UPDATE meeting SET google_event_id = ?, google_sync_error = NULL WHERE id = ?`).run(out.id, meetingId);
+    await db.prepare(`UPDATE meeting SET google_event_id = ?, google_sync_error = NULL WHERE id = ?`).run(out.id, meetingId);
     return { synced: true, eventId: out.id, htmlLink: out.htmlLink };
   } catch (err) {
     const message = (err as Error).message;
     // A 404 means the event was deleted in Google; drop our id so the next
     // push recreates it instead of failing forever.
     if (/404|not found/i.test(message)) {
-      db.prepare(`UPDATE meeting SET google_event_id = NULL WHERE id = ?`).run(meetingId);
+      await db.prepare(`UPDATE meeting SET google_event_id = NULL WHERE id = ?`).run(meetingId);
     }
-    db.prepare(`UPDATE meeting SET google_sync_error = ? WHERE id = ?`).run(message, meetingId);
+    await db.prepare(`UPDATE meeting SET google_sync_error = ? WHERE id = ?`).run(message, meetingId);
     return { synced: false, reason: message };
   }
 }
 
 export async function removeMeeting(meetingId: number): Promise<SyncResult> {
-  const m = meetingForSync(meetingId);
+  const m = await meetingForSync(meetingId);
   if (!m?.google_event_id) return { synced: false, reason: 'Nothing on Google to remove' };
 
   const token = await accessTokenFor(m.salesman_id);
   if (!token) return { synced: false, reason: 'Not connected' };
 
-  const acct = googleAccount(m.salesman_id);
+  const acct = await googleAccount(m.salesman_id);
   const calId = encodeURIComponent(acct?.calendar_id ?? 'primary');
   try {
     await calFetch(token, `/calendars/${calId}/events/${encodeURIComponent(m.google_event_id)}`, { method: 'DELETE' });
@@ -309,7 +309,7 @@ export async function removeMeeting(meetingId: number): Promise<SyncResult> {
       return { synced: false, reason: (err as Error).message };
     }
   }
-  db.prepare(`UPDATE meeting SET google_event_id = NULL WHERE id = ?`).run(meetingId);
+  await db.prepare(`UPDATE meeting SET google_event_id = NULL WHERE id = ?`).run(meetingId);
   return { synced: true };
 }
 
@@ -321,7 +321,7 @@ export async function removeMeeting(meetingId: number): Promise<SyncResult> {
 export async function busyBlocks(salesmanId: number, fromIso: string, toIso: string): Promise<Array<{ start: string; end: string }>> {
   const token = await accessTokenFor(salesmanId);
   if (!token) return [];
-  const acct = googleAccount(salesmanId);
+  const acct = await googleAccount(salesmanId);
   try {
     const out: any = await calFetch(token, '/freeBusy', {
       method: 'POST',

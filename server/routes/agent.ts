@@ -25,18 +25,18 @@ const upload = multer({
 agentRouter.post(
   '/import/companies',
   upload.single('file'),
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     if (!req.file) throw new HttpError(400, 'No file uploaded — choose a .csv file');
     const dryRun = req.body?.mode !== 'commit';
-    const summary = importCompanies(req.file.buffer, req.file.originalname, { dryRun });
+    const summary = await importCompanies(req.file.buffer, req.file.originalname, { dryRun });
     res.json({ ...summary, dryRun });
   }),
 );
 
 agentRouter.get(
   '/import/batches',
-  asyncRoute((_req, res) => {
-    res.json(db.prepare('SELECT * FROM import_batch ORDER BY id DESC LIMIT 20').all());
+  asyncRoute(async (_req, res) => {
+    res.json(await db.prepare('SELECT * FROM import_batch ORDER BY id DESC LIMIT 20').all());
   }),
 );
 
@@ -68,22 +68,22 @@ agentRouter.post('/agent/drain-outbox', asyncRoute(async (_req, res) => res.json
 
 agentRouter.get(
   '/agent/runs',
-  asyncRoute((_req, res) => {
-    res.json(db.prepare('SELECT * FROM agent_run ORDER BY id DESC LIMIT 40').all());
+  asyncRoute(async (_req, res) => {
+    res.json(await db.prepare('SELECT * FROM agent_run ORDER BY id DESC LIMIT 40').all());
   }),
 );
 
 /** What the agent *would* do this week, without writing anything. */
 agentRouter.get(
   '/agent/status',
-  asyncRoute((_req, res) => {
+  asyncRoute(async (_req, res) => {
     const week = weekStart();
-    const salesmen = db.prepare(`SELECT * FROM salesman WHERE active = 1 AND role = 'salesman'`).all() as any[];
-    const perSalesman = salesmen.map((s) => {
-      const assigned = (db.prepare('SELECT COUNT(*) AS n FROM assignment WHERE salesman_id = ? AND week_start = ?').get(s.id, week) as any).n;
+    const salesmen = await db.prepare(`SELECT * FROM salesman WHERE active = 1 AND role = 'salesman'`).all() as any[];
+    const perSalesman = salesmen.map(async (s) => {
+      const assigned = (await db.prepare('SELECT COUNT(*) AS n FROM assignment WHERE salesman_id = ? AND week_start = ?').get(s.id, week) as any).n;
       return { id: s.id, name: s.name, quota: s.weekly_quota, assigned, short: Math.max(0, s.weekly_quota - assigned) };
     });
-    const pool = (db.prepare(
+    const pool = (await db.prepare(
       `SELECT COUNT(*) AS n FROM company
         WHERE do_not_contact = 0 AND stage NOT IN ('won','lost')
           AND NOT EXISTS (SELECT 1 FROM assignment a WHERE a.company_id = company.id AND a.status IN ('pending','in_progress','meeting_set'))`,
@@ -91,11 +91,11 @@ agentRouter.get(
 
     res.json({
       week, weekLabel: weekLabel(week), perSalesman, availablePool: pool,
-      lastRun: db.prepare(`SELECT * FROM agent_run WHERE kind = 'weekly_assignment' ORDER BY id DESC LIMIT 1`).get() ?? null,
+      lastRun: await db.prepare(`SELECT * FROM agent_run WHERE kind = 'weekly_assignment' ORDER BY id DESC LIMIT 1`).get() ?? null,
       cronEnabled: process.env.AGENT_CRON !== 'off',
       outboundMode: outboundMode(),
       redirectTo: redirectTarget(),
-      suppressed: (db.prepare(`SELECT COUNT(*) AS n FROM notification WHERE status = 'suppressed'`).get() as any).n,
+      suppressed: (await db.prepare(`SELECT COUNT(*) AS n FROM notification WHERE status = 'suppressed'`).get() as any).n,
     });
   }),
 );
@@ -104,7 +104,7 @@ agentRouter.get(
 
 agentRouter.get(
   '/notifications',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { recipientType = 'salesman', recipientId, unreadOnly, channel, limit = '50' } = req.query as Record<string, string>;
     const where: string[] = [];
     const params: any[] = [];
@@ -119,24 +119,24 @@ agentRouter.get(
     if (channel) { where.push('channel = ?'); params.push(channel); }
     if (unreadOnly === 'true') where.push(`read_at IS NULL`);
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    res.json(db.prepare(`SELECT * FROM notification ${clause} ORDER BY id DESC LIMIT ?`).all(...params, Math.min(200, Number(limit) || 50)));
+    res.json(await db.prepare(`SELECT * FROM notification ${clause} ORDER BY id DESC LIMIT ?`).all(...params, Math.min(200, Number(limit) || 50)));
   }),
 );
 
 agentRouter.post(
   '/notifications/:id/read',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
-    db.prepare(`UPDATE notification SET read_at = datetime('now'), status = 'read' WHERE id = ?`).run(id);
+    await db.prepare(`UPDATE notification SET read_at = datetime('now'), status = 'read' WHERE id = ?`).run(id);
     res.json({ ok: true });
   }),
 );
 
 agentRouter.post(
   '/notifications/read-all',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { recipientId } = parseBody(z.object({ recipientId: z.number().int() }), req.body);
-    db.prepare(
+    await db.prepare(
       `UPDATE notification SET read_at = datetime('now'), status = 'read'
         WHERE recipient_type IN ('salesman','manager') AND recipient_id = ? AND read_at IS NULL`,
     ).run(recipientId);
@@ -148,8 +148,8 @@ agentRouter.post(
 
 agentRouter.get(
   '/settings',
-  asyncRoute((_req, res) => {
-    const rows = db.prepare('SELECT key, value FROM setting').all() as any[];
+  asyncRoute(async (_req, res) => {
+    const rows = await db.prepare('SELECT key, value FROM setting').all() as any[];
     res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
   }),
 );

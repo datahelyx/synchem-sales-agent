@@ -10,14 +10,14 @@ export const catalogRouter = Router();
 
 catalogRouter.get(
   '/products',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { q, category, inStock } = req.query as Record<string, string>;
     const where = ['active = 1'];
     const params: any[] = [];
     if (q) { where.push('(name LIKE ? OR sku LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
     if (category) { where.push('category = ?'); params.push(category); }
     if (inStock === 'true') where.push('stock_qty > 0');
-    res.json(db.prepare(`SELECT * FROM product WHERE ${where.join(' AND ')} ORDER BY category, name`).all(...params));
+    res.json(await db.prepare(`SELECT * FROM product WHERE ${where.join(' AND ')} ORDER BY category, name`).all(...params));
   }),
 );
 
@@ -34,11 +34,11 @@ const productInput = z.object({
 
 catalogRouter.post(
   '/products',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const p = parseBody(productInput, req.body);
-    const existing = db.prepare('SELECT id FROM product WHERE sku = ?').get(p.sku);
+    const existing = await db.prepare('SELECT id FROM product WHERE sku = ?').get(p.sku);
     if (existing) throw new HttpError(409, `SKU ${p.sku} already exists`);
-    const r = db
+    const r = await db
       .prepare(
         `INSERT INTO product (sku, name, category, pack_size, uom, unit_price, stock_qty, sample_qty)
          VALUES (@sku, @name, @category, @pack_size, @uom, @unit_price, @stock_qty, @sample_qty)`,
@@ -46,18 +46,18 @@ catalogRouter.post(
       .run({ ...p, category: p.category ?? null, pack_size: p.pack_size ?? null });
     const id = Number(r.lastInsertRowid);
     if (p.stock_qty) {
-      db.prepare(`INSERT INTO stock_move (product_id, qty, reason) VALUES (?, ?, 'restock')`).run(id, p.stock_qty);
+      await db.prepare(`INSERT INTO stock_move (product_id, qty, reason) VALUES (?, ?, 'restock')`).run(id, p.stock_qty);
     }
-    res.status(201).json(db.prepare('SELECT * FROM product WHERE id = ?').get(id));
+    res.status(201).json(await db.prepare('SELECT * FROM product WHERE id = ?').get(id));
   }),
 );
 
 catalogRouter.patch(
   '/products/:id',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
     const patch = parseBody(productInput.partial().extend({ active: z.boolean().optional() }), req.body);
-    const before = db.prepare('SELECT * FROM product WHERE id = ?').get(id) as any;
+    const before = await db.prepare('SELECT * FROM product WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Product not found');
 
     const sets: string[] = [];
@@ -70,15 +70,15 @@ catalogRouter.patch(
     }
     if (sets.length) {
       sets.push(`updated_at = datetime('now')`);
-      db.prepare(`UPDATE product SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+      await db.prepare(`UPDATE product SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     }
     if (patch.stock_qty !== undefined && patch.stock_qty !== before.stock_qty) {
       const delta = patch.stock_qty - before.stock_qty;
-      db.prepare(`INSERT INTO stock_move (product_id, qty, reason) VALUES (?, ?, 'adjustment')`).run(id, delta);
-      db.prepare(`UPDATE product SET stock_qty = stock_qty + ? WHERE id = ?`).run(delta, id);
+      await db.prepare(`INSERT INTO stock_move (product_id, qty, reason) VALUES (?, ?, 'adjustment')`).run(id, delta);
+      await db.prepare(`UPDATE product SET stock_qty = stock_qty + ? WHERE id = ?`).run(delta, id);
     }
-    const after = db.prepare('SELECT * FROM product WHERE id = ?').get(id);
-    recordRevision('product', id, before, after);
+    const after = await db.prepare('SELECT * FROM product WHERE id = ?').get(id);
+    await recordRevision('product', id, before, after);
     res.json(after);
   }),
 );
@@ -87,10 +87,10 @@ catalogRouter.patch(
 
 catalogRouter.get(
   '/samples',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { status } = req.query as Record<string, string>;
     const clause = status ? 'WHERE sr.status = ?' : '';
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT sr.*, c.name AS company_name, s.name AS salesman_name
            FROM sample_request sr
@@ -100,7 +100,7 @@ catalogRouter.get(
            ORDER BY sr.id DESC LIMIT 200`,
       )
       .all(...(status ? [status] : [])) as any[];
-    const lines = db.prepare(
+    const lines = await db.prepare(
       `SELECT sl.sample_request_id, sl.qty, p.name, p.uom, p.sku FROM sample_line sl JOIN product p ON p.id = sl.product_id`,
     ).all() as any[];
     for (const r of rows) r.lines = lines.filter((l) => l.sample_request_id === r.id);
@@ -110,7 +110,7 @@ catalogRouter.get(
 
 catalogRouter.patch(
   '/samples/:id',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
     const patch = parseBody(
       z.object({
@@ -120,10 +120,10 @@ catalogRouter.patch(
       }),
       req.body,
     );
-    const before = db.prepare('SELECT * FROM sample_request WHERE id = ?').get(id) as any;
+    const before = await db.prepare('SELECT * FROM sample_request WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Sample request not found');
 
-    db.prepare(
+    await db.prepare(
       `UPDATE sample_request SET status = COALESCE(?, status), courier = COALESCE(?, courier),
               tracking_ref = COALESCE(?, tracking_ref),
               dispatched_at = CASE WHEN ? = 'dispatched' THEN datetime('now') ELSE dispatched_at END,
@@ -133,12 +133,12 @@ catalogRouter.patch(
     ).run(patch.status ?? null, patch.courier ?? null, patch.trackingRef ?? null, patch.status ?? '', patch.status ?? '', id);
 
     if (patch.status) {
-      logActivity({
+      await logActivity({
         companyId: before.company_id, salesmanId: before.salesman_id, kind: 'sample',
         summary: `Sample request ${patch.status}`, actor: 'manager',
       });
     }
-    res.json(db.prepare('SELECT * FROM sample_request WHERE id = ?').get(id));
+    res.json(await db.prepare('SELECT * FROM sample_request WHERE id = ?').get(id));
   }),
 );
 
@@ -146,24 +146,24 @@ catalogRouter.patch(
 
 catalogRouter.get(
   '/invoices',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { status } = req.query as Record<string, string>;
     const clause = status ? 'WHERE i.status = ?' : '';
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT i.*, c.name AS company_name, s.name AS salesman_name
            FROM invoice i JOIN company c ON c.id = i.company_id JOIN salesman s ON s.id = i.salesman_id
            ${clause} ORDER BY i.id DESC LIMIT 200`,
       )
       .all(...(status ? [status] : [])) as any[];
-    for (const r of rows) r.lines = db.prepare('SELECT * FROM invoice_line WHERE invoice_id = ?').all(r.id);
+    for (const r of rows) r.lines = await db.prepare('SELECT * FROM invoice_line WHERE invoice_id = ?').all(r.id);
     res.json(rows);
   }),
 );
 
 catalogRouter.patch(
   '/invoices/:id',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
     const patch = parseBody(
       z.object({
@@ -174,19 +174,19 @@ catalogRouter.patch(
       }),
       req.body,
     );
-    const before = db.prepare('SELECT * FROM invoice WHERE id = ?').get(id) as any;
+    const before = await db.prepare('SELECT * FROM invoice WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Invoice not found');
 
     const subtotal = patch.subtotal ?? before.subtotal;
     const taxRate = patch.taxRate ?? before.tax_rate;
-    db.prepare(
+    await db.prepare(
       `UPDATE invoice SET status = COALESCE(?, status), subtotal = ?, tax_rate = ?, total = ?,
               due_date = COALESCE(?, due_date), updated_at = datetime('now') WHERE id = ?`,
     ).run(patch.status ?? null, subtotal, taxRate, subtotal * (1 + taxRate), patch.dueDate ?? null, id);
 
-    const after = db.prepare('SELECT * FROM invoice WHERE id = ?').get(id);
-    recordRevision('invoice', id, before, after);
-    logActivity({
+    const after = await db.prepare('SELECT * FROM invoice WHERE id = ?').get(id);
+    await recordRevision('invoice', id, before, after);
+    await logActivity({
       companyId: before.company_id, salesmanId: before.salesman_id, kind: 'invoice',
       summary: `Invoice ${before.number} updated${patch.status ? ` → ${patch.status}` : ''}`, actor: 'manager',
     });

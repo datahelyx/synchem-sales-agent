@@ -62,8 +62,8 @@ const providers: Record<ProviderName, SchedulingProvider> = {
   odoo: { name: 'odoo', createEvent: (req) => manual.createEvent(req) as ProviderResult },
 };
 
-export function activeProvider(): SchedulingProvider {
-  const configured = (db.prepare(`SELECT value FROM setting WHERE key = 'scheduling_provider'`).get() as any)?.value;
+export async function activeProvider(): Promise<SchedulingProvider> {
+  const configured = (await db.prepare(`SELECT value FROM setting WHERE key = 'scheduling_provider'`).get() as any)?.value;
   const name = (configured ?? (process.env.CALENDLY_LINK ? 'calendly' : 'manual')) as ProviderName;
   return providers[name] ?? manual;
 }
@@ -72,10 +72,10 @@ export function activeProvider(): SchedulingProvider {
  * Working-hour slots for the next `days` days, minus anything the salesman has
  * already booked. Fridays get a lunch-prayer gap, Sundays are skipped.
  */
-export function suggestSlots(salesmanId: number, days = 10, durationMin = 30) {
+export async function suggestSlots(salesmanId: number, days = 10, durationMin = 30) {
   const busy = new Set(
     (
-      db
+      await db
         .prepare(
           `SELECT scheduled_at FROM meeting
             WHERE salesman_id = ? AND status IN ('proposed','scheduled')

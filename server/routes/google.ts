@@ -10,9 +10,9 @@ const WEB_ORIGIN = () => process.env.WEB_ORIGIN ?? `http://localhost:${process.e
 /** Who is connected, so the UI can show a Connect or Disconnect button. */
 googleRouter.get(
   '/google/status',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const cfg = googleConfig();
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT s.id, s.name, s.role, g.google_email, g.connected_at, g.last_error
            FROM salesman s LEFT JOIN google_account g ON g.salesman_id = s.id
@@ -21,6 +21,7 @@ googleRouter.get(
       .all() as any[];
 
     const salesmanId = req.query.salesmanId ? Number(req.query.salesmanId) : null;
+    const meAccount = salesmanId ? await googleAccount(salesmanId) : null;
     res.json({
       configured: cfg.configured,
       redirectUri: cfg.redirectUri,
@@ -33,16 +34,16 @@ googleRouter.get(
         connectedAt: r.connected_at,
         error: r.last_error,
       })),
-      me: salesmanId ? (googleAccount(salesmanId) ? { connected: true, email: googleAccount(salesmanId).google_email } : { connected: false }) : null,
+      me: meAccount ? { connected: true, email: meAccount.google_email } : { connected: false },
     });
   }),
 );
 
 googleRouter.get(
   '/google/connect',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const salesmanId = intParam(req.query.salesmanId, 'salesmanId');
-    const url = authUrl(salesmanId);
+    const url = await authUrl(salesmanId);
     if (!url) {
       throw new HttpError(
         400,
@@ -67,7 +68,7 @@ googleRouter.get(
     if (error) return back({ google: 'error', message: error });
     if (!code || !state) return back({ google: 'error', message: 'Missing code or state' });
 
-    const salesmanId = verifyState(state);
+    const salesmanId = await verifyState(state);
     if (!salesmanId) return back({ google: 'error', message: 'That sign-in link expired — try again' });
 
     try {
@@ -75,7 +76,7 @@ googleRouter.get(
 
       // Push anything already booked and still ahead, so a freshly connected
       // calendar is not empty of the meetings the app already knows about.
-      const pending = db
+      const pending = await db
         .prepare(
           `SELECT id FROM meeting
             WHERE salesman_id = ? AND status IN ('proposed','scheduled')
@@ -97,9 +98,9 @@ googleRouter.get(
 
 googleRouter.post(
   '/google/disconnect',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const salesmanId = intParam(req.body?.salesmanId, 'salesmanId');
-    disconnect(salesmanId);
+    await disconnect(salesmanId);
     res.json({ ok: true });
   }),
 );
@@ -109,7 +110,7 @@ googleRouter.post(
   '/google/resync',
   asyncRoute(async (req, res) => {
     const salesmanId = intParam(req.body?.salesmanId, 'salesmanId');
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT id FROM meeting
           WHERE salesman_id = ? AND status IN ('proposed','scheduled')

@@ -16,13 +16,13 @@ if (!fs.existsSync(file)) {
   process.exit(1);
 }
 
-migrate();
-seedIfEmpty();
+await migrate();
+await seedIfEmpty();
 
 const dryRun = process.argv.includes('--dry-run');
 const buf = fs.readFileSync(file);
 const t0 = Date.now();
-const summary = importCompanies(buf, path.basename(file), { dryRun });
+const summary = await importCompanies(buf, path.basename(file), { dryRun });
 
 console.log(`\n${dryRun ? 'DRY RUN — nothing written' : 'Imported'}: ${summary.filename}`);
 console.log(`  encoding : ${summary.encoding}`);

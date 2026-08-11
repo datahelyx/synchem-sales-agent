@@ -1,4 +1,4 @@
-import { db } from '../db/index.js';
+import { db, tx } from '../db/index.js';
 
 /**
  * First-run seed: the reason codes the feedback form offers, a small sales
@@ -62,42 +62,42 @@ const TEAM: Array<[string, string, string | null, string, number, string | null]
   ['Farhan Sheikh', 'salesman', null, 'farhan.sheikh@synchem.example', 2, 'Raiwind,Sundar Industrial Estate'],
 ];
 
-export function seedIfEmpty() {
-  const reasonCount = (db.prepare('SELECT COUNT(*) AS n FROM reason_code').get() as any).n;
+export async function seedIfEmpty() {
+  const reasonCount = (await db.prepare('SELECT COUNT(*) AS n FROM reason_code').get() as any).n;
   if (reasonCount === 0) {
     const ins = db.prepare('INSERT INTO reason_code (outcome, code, label, sort) VALUES (?, ?, ?, ?)');
-    db.transaction(() => REASONS.forEach((r) => ins.run(...r)))();
+    await tx(async () => { for (const r of REASONS) await ins.run(...r); });
   }
 
-  const productCount = (db.prepare('SELECT COUNT(*) AS n FROM product').get() as any).n;
+  const productCount = (await db.prepare('SELECT COUNT(*) AS n FROM product').get() as any).n;
   if (productCount === 0) {
     const ins = db.prepare(
       `INSERT INTO product (sku, name, category, pack_size, uom, unit_price, stock_qty, sample_qty)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
     );
     const move = db.prepare(`INSERT INTO stock_move (product_id, qty, reason) VALUES (?, ?, 'restock')`);
-    db.transaction(() => {
+    await tx(async () => {
       for (const p of PRODUCTS) {
-        const r = ins.run(...p);
-        move.run(Number(r.lastInsertRowid), p[6]);
+        const r = await ins.run(...p);
+        await move.run(Number(r.lastInsertRowid), p[6]);
       }
-    })();
+    });
   }
 
-  const teamCount = (db.prepare('SELECT COUNT(*) AS n FROM salesman').get() as any).n;
+  const teamCount = (await db.prepare('SELECT COUNT(*) AS n FROM salesman').get() as any).n;
   if (teamCount === 0) {
     const ins = db.prepare(
       'INSERT INTO salesman (name, role, phone_e164, email, weekly_quota, areas) VALUES (?, ?, ?, ?, ?, ?)',
     );
-    db.transaction(() => TEAM.forEach((t) => ins.run(...t)))();
+    await tx(async () => { for (const t of TEAM) await ins.run(...t); });
   }
 
-  const settings = db.prepare('SELECT COUNT(*) AS n FROM setting').get() as any;
+  const settings = await db.prepare('SELECT COUNT(*) AS n FROM setting').get() as any;
   if (settings.n === 0) {
     const ins = db.prepare('INSERT INTO setting (key, value) VALUES (?, ?)');
-    db.transaction(() => {
-      ins.run('scheduling_provider', process.env.CALENDLY_LINK ? 'calendly' : 'manual');
-      ins.run('company_name', 'SynChem');
-    })();
+    await tx(async () => {
+      await ins.run('scheduling_provider', process.env.CALENDLY_LINK ? 'calendly' : 'manual');
+      await ins.run('company_name', 'SynChem');
+    });
   }
 }

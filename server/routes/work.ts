@@ -17,14 +17,14 @@ export const workRouter = Router();
 /** A salesman's week: the 2 companies plus everything needed to act on them. */
 workRouter.get(
   '/assignments',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { salesmanId, week } = req.query as Record<string, string>;
     const w = week || weekStart();
     const where = ['a.week_start = ?'];
     const params: any[] = [w];
     if (salesmanId) { where.push('a.salesman_id = ?'); params.push(Number(salesmanId)); }
 
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT a.*, c.name AS company_name, c.area, c.industry, c.phone, c.phone_e164, c.email,
                 c.contact_name, c.contact_title, c.stage, c.data_quality, c.follow_up_on,
@@ -66,7 +66,7 @@ workRouter.get(
 
 workRouter.patch(
   '/assignments/:id',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
     const patch = parseBody(
       z.object({
@@ -76,20 +76,20 @@ workRouter.patch(
       }),
       req.body,
     );
-    const before = db.prepare('SELECT * FROM assignment WHERE id = ?').get(id) as any;
+    const before = await db.prepare('SELECT * FROM assignment WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Assignment not found');
 
-    db.prepare(
+    await db.prepare(
       `UPDATE assignment SET status = COALESCE(?, status), notes = COALESCE(?, notes),
               closed_at = CASE WHEN ? IN ('completed','skipped') THEN datetime('now') ELSE closed_at END,
               updated_at = datetime('now')
         WHERE id = ?`,
     ).run(patch.status ?? null, patch.notes ?? null, patch.status ?? '', id);
 
-    if (patch.status === 'in_progress') setStage(before.company_id, 'contacted', { salesmanId: before.salesman_id, actor: 'salesman' });
+    if (patch.status === 'in_progress') await setStage(before.company_id, 'contacted', { salesmanId: before.salesman_id, actor: 'salesman' });
 
-    const after = db.prepare('SELECT * FROM assignment WHERE id = ?').get(id);
-    recordRevision('assignment', id, before, after, patch.actorId);
+    const after = await db.prepare('SELECT * FROM assignment WHERE id = ?').get(id);
+    await recordRevision('assignment', id, before, after, patch.actorId);
     res.json(after);
   }),
 );
@@ -100,7 +100,7 @@ workRouter.get(
   '/meetings/slots',
   asyncRoute(async (req, res) => {
     const salesmanId = intParam(req.query.salesmanId, 'salesmanId');
-    const base = suggestSlots(salesmanId);
+    const base = await suggestSlots(salesmanId);
 
     /*
      * When Google is connected, the salesman's real diary decides what is free
@@ -110,7 +110,7 @@ workRouter.get(
      */
     const all = base.days.flatMap((d) => d.slots);
     let googleBusy = false;
-    if (all.length && googleAccount(salesmanId)) {
+    if (all.length && await googleAccount(salesmanId)) {
       const from = all[0].iso;
       const last = new Date(all[all.length - 1].iso);
       const busy = await busyBlocks(salesmanId, from, new Date(last.getTime() + 60 * 60_000).toISOString());
@@ -130,10 +130,10 @@ workRouter.get(
     // outboundMode travels with the slots so the booking screen can tell the
     // salesman up front whether the contact will really be messaged.
     res.json({
-      provider: activeProvider().name,
+      provider: (await activeProvider()).name,
       outboundMode: outboundMode(),
       redirectTo: redirectTarget(),
-      googleConnected: Boolean(googleAccount(salesmanId)),
+      googleConnected: Boolean(await googleAccount(salesmanId)),
       googleBusy,
       ...base,
     });
@@ -142,7 +142,7 @@ workRouter.get(
 
 workRouter.get(
   '/meetings',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const { salesmanId, status, from, to } = req.query as Record<string, string>;
     const where: string[] = [];
     const params: any[] = [];
@@ -153,7 +153,7 @@ workRouter.get(
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     res.json(
-      db
+      await db
         .prepare(
           `SELECT m.*, c.name AS company_name, c.area, c.contact_name, c.contact_title, c.phone_e164,
                   s.name AS salesman_name, f.id AS feedback_id, f.outcome
@@ -188,13 +188,13 @@ workRouter.post(
   '/meetings',
   asyncRoute(async (req, res) => {
     const input = parseBody(meetingInput, req.body);
-    const company = db.prepare('SELECT * FROM company WHERE id = ?').get(input.companyId) as any;
+    const company = await db.prepare('SELECT * FROM company WHERE id = ?').get(input.companyId) as any;
     if (!company) throw new HttpError(404, 'Company not found');
 
-    const provider = await activeProvider().createEvent(input);
+    const provider = await (await activeProvider()).createEvent(input);
 
-    const id = tx(() => {
-      const r = db
+    const id = await tx(async () => {
+      const r = await db
         .prepare(
           `INSERT INTO meeting (assignment_id, company_id, salesman_id, scheduled_at, duration_min, mode, location,
                                 provider, provider_event_id, booking_url, agreed_with_contact)
@@ -215,10 +215,10 @@ workRouter.post(
         );
       const mid = Number(r.lastInsertRowid);
       if (input.assignmentId) {
-        db.prepare(`UPDATE assignment SET status = 'meeting_set', updated_at = datetime('now') WHERE id = ?`).run(input.assignmentId);
+        await db.prepare(`UPDATE assignment SET status = 'meeting_set', updated_at = datetime('now') WHERE id = ?`).run(input.assignmentId);
       }
-      setStage(input.companyId, 'meeting_scheduled', { salesmanId: input.salesmanId, actor: 'salesman' });
-      logActivity({
+      await setStage(input.companyId, 'meeting_scheduled', { salesmanId: input.salesmanId, actor: 'salesman' });
+      await logActivity({
         companyId: input.companyId,
         salesmanId: input.salesmanId,
         kind: 'meeting_scheduled',
@@ -239,12 +239,12 @@ workRouter.post(
     await notifyManagers(id);
     if (input.notifyContact) await inviteContact(id);
 
-    res.status(201).json({ ...(db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as object), google });
+    res.status(201).json({ ...(await db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as object), google });
   }),
 );
 
-function meetingRow(meetingId: number) {
-  return db
+async function meetingRow(meetingId: number) {
+  return await db
     .prepare(
       `SELECT m.*, c.name AS company_name, c.area, c.contact_name, c.contact_title,
               c.phone_e164, c.email, s.name AS salesman_name, s.email AS salesman_email,
@@ -261,8 +261,8 @@ function whenLabel(iso: string) {
   });
 }
 
-function calendarAttachment(meetingId: number, method: 'REQUEST' | 'CANCEL' = 'REQUEST') {
-  const ics = icsForMeeting(meetingId, { method });
+async function calendarAttachment(meetingId: number, method: 'REQUEST' | 'CANCEL' = 'REQUEST') {
+  const ics = await icsForMeeting(meetingId, { method });
   if (!ics) return undefined;
   return [{
     filename: method === 'CANCEL' ? 'cancelled.ics' : 'invite.ics',
@@ -277,7 +277,7 @@ function calendarAttachment(meetingId: number, method: 'REQUEST' | 'CANCEL' = 'R
  * never adds it.
  */
 async function sendSalesmanInvite(meetingId: number, method: 'REQUEST' | 'CANCEL' = 'REQUEST') {
-  const m = meetingRow(meetingId);
+  const m = await meetingRow(meetingId);
   if (!m?.salesman_email) return;
 
   const verb = m.mode === 'onsite' ? 'Visit' : m.mode === 'call' ? 'Call' : 'Video call';
@@ -300,7 +300,7 @@ async function sendSalesmanInvite(meetingId: number, method: 'REQUEST' | 'CANCEL
           `${m.phone_e164 ? ` (${m.phone_e164})` : ''}\n\n` +
           `Add the attached invite to your calendar — it carries its own reminders.`,
     payload: { meetingId },
-    attachments: calendarAttachment(meetingId, method),
+    attachments: await calendarAttachment(meetingId, method),
   });
 }
 
@@ -311,10 +311,10 @@ async function sendSalesmanInvite(meetingId: number, method: 'REQUEST' | 'CANCEL
  * .ics with no alarms, and nothing from the reminder sweep.
  */
 async function notifyManagers(meetingId: number, method: 'REQUEST' | 'CANCEL' = 'REQUEST') {
-  const m = meetingRow(meetingId);
+  const m = await meetingRow(meetingId);
   if (!m) return;
 
-  const managers = db.prepare(`SELECT * FROM salesman WHERE role = 'manager' AND active = 1`).all() as any[];
+  const managers = await db.prepare(`SELECT * FROM salesman WHERE role = 'manager' AND active = 1`).all() as any[];
   const title = `${m.salesman_name} × ${m.company_name}`;
 
   for (const mgr of managers) {
@@ -342,8 +342,8 @@ async function notifyManagers(meetingId: number, method: 'REQUEST' | 'CANCEL' = 
         body: `${title}\n${whenLabel(m.scheduled_at)}\n\nAdded to your calendar for visibility. You will not be reminded about it.`,
         payload: { meetingId },
         // No alarms: it shows on the manager's calendar without nagging them.
-        attachments: (() => {
-          const ics = icsForMeeting(meetingId, { method, alarms: [] });
+        attachments: await (async () => {
+          const ics = await icsForMeeting(meetingId, { method, alarms: [] });
           return ics
             ? [{ filename: 'meeting.ics', content: ics, contentType: `text/calendar; charset=utf-8; method=${method}` }]
             : undefined;
@@ -358,7 +358,7 @@ async function notifyManagers(meetingId: number, method: 'REQUEST' | 'CANCEL' = 
  * WhatsApp is the primary path and email is the exception — not the reverse.
  */
 async function inviteContact(meetingId: number) {
-  const m = db
+  const m = await db
     .prepare(
       `SELECT m.*, c.name AS company_name, c.contact_name, c.contact_title, c.phone_e164, c.email,
               s.name AS salesman_name, s.phone_e164 AS salesman_phone
@@ -398,15 +398,15 @@ async function inviteContact(meetingId: number) {
       channel: 'email', template: 'contact_meeting_invite', recipientType: 'contact',
       recipientId: m.company_id, toAddr: m.email, subject: `Meeting confirmation — ${when}`, body,
       payload: { meetingId },
-      attachments: calendarAttachment(meetingId),
+      attachments: await calendarAttachment(meetingId),
     });
     reached = true;
   }
 
   if (reached) {
-    db.prepare(`UPDATE meeting SET contact_notified_at = datetime('now') WHERE id = ?`).run(meetingId);
+    await db.prepare(`UPDATE meeting SET contact_notified_at = datetime('now') WHERE id = ?`).run(meetingId);
   } else {
-    logActivity({
+    await logActivity({
       companyId: m.company_id, salesmanId: m.salesman_id, kind: 'note',
       summary: 'Could not invite the contact — no phone and no email on file',
     });
@@ -415,7 +415,7 @@ async function inviteContact(meetingId: number) {
 
 workRouter.post('/meetings/:id/invite', asyncRoute(async (req, res) => {
   await inviteContact(intParam(req.params.id));
-  res.json(db.prepare('SELECT * FROM meeting WHERE id = ?').get(intParam(req.params.id)));
+  res.json(await db.prepare('SELECT * FROM meeting WHERE id = ?').get(intParam(req.params.id)));
 }));
 
 workRouter.patch(
@@ -433,21 +433,21 @@ workRouter.patch(
       }),
       req.body,
     );
-    const before = db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as any;
+    const before = await db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Meeting not found');
 
-    db.prepare(
+    await db.prepare(
       `UPDATE meeting SET scheduled_at = COALESCE(?, scheduled_at), duration_min = COALESCE(?, duration_min),
               mode = COALESCE(?, mode), location = COALESCE(?, location), status = COALESCE(?, status),
               updated_at = datetime('now')
         WHERE id = ?`,
     ).run(patch.scheduledAt ?? null, patch.durationMin ?? null, patch.mode ?? null, patch.location ?? null, patch.status ?? null, id);
 
-    if (patch.status === 'held') setStage(before.company_id, 'met', { salesmanId: before.salesman_id, actor: 'salesman' });
+    if (patch.status === 'held') await setStage(before.company_id, 'met', { salesmanId: before.salesman_id, actor: 'salesman' });
 
-    const after = db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as any;
-    recordRevision('meeting', id, before, after, patch.actorId);
-    logActivity({
+    const after = await db.prepare('SELECT * FROM meeting WHERE id = ?').get(id) as any;
+    await recordRevision('meeting', id, before, after, patch.actorId);
+    await logActivity({
       companyId: before.company_id, salesmanId: before.salesman_id, kind: 'meeting_scheduled',
       summary: patch.status ? `Meeting marked ${patch.status}` : 'Meeting details updated', actor: 'salesman',
     });
@@ -460,11 +460,11 @@ workRouter.patch(
     const cancelled = patch.status === 'cancelled' && before.status !== 'cancelled';
 
     if (moved || cancelled) {
-      bumpIcsSequence(id);
+      await bumpIcsSequence(id);
       const method = cancelled ? 'CANCEL' : 'REQUEST';
       // A reschedule invalidates reminders already sent for the old time.
       if (moved && !cancelled) {
-        db.prepare(`UPDATE meeting SET reminded_day_before_at = NULL, reminded_hours_before_at = NULL WHERE id = ?`).run(id);
+        await db.prepare(`UPDATE meeting SET reminded_day_before_at = NULL, reminded_hours_before_at = NULL WHERE id = ?`).run(id);
       }
       // Same event id on Google, so it moves rather than duplicating.
       if (cancelled) await removeMeeting(id);
@@ -475,16 +475,16 @@ workRouter.patch(
       if (!cancelled) await inviteContact(id);
     }
 
-    res.json(db.prepare('SELECT * FROM meeting WHERE id = ?').get(id));
+    res.json(await db.prepare('SELECT * FROM meeting WHERE id = ?').get(id));
   }),
 );
 
 /** Download the calendar entry directly — useful when email is not configured. */
 workRouter.get(
   '/meetings/:id/calendar.ics',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const id = intParam(req.params.id);
-    const ics = icsForMeeting(id);
+    const ics = await icsForMeeting(id);
     if (!ics) throw new HttpError(404, 'Meeting not found');
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="synchem-meeting-${id}.ics"`);
@@ -510,18 +510,18 @@ const feedbackInput = z.object({
 /** Create-or-update: the same endpoint handles the first entry and every edit. */
 workRouter.post(
   '/feedback',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const input = parseBody(feedbackInput, req.body);
-    const meeting = db.prepare('SELECT * FROM meeting WHERE id = ?').get(input.meetingId) as any;
+    const meeting = await db.prepare('SELECT * FROM meeting WHERE id = ?').get(input.meetingId) as any;
     if (!meeting) throw new HttpError(404, 'Meeting not found');
 
-    const before = db.prepare('SELECT * FROM feedback WHERE meeting_id = ?').get(input.meetingId) as any;
+    const before = await db.prepare('SELECT * FROM feedback WHERE meeting_id = ?').get(input.meetingId) as any;
 
-    const feedbackId = tx(() => {
+    const feedbackId = await tx(async () => {
       let fid: number;
       if (before) {
         fid = before.id;
-        db.prepare(
+        await db.prepare(
           `UPDATE feedback SET outcome = ?, reason_code = ?, reason_note = ?, sample_requested = ?,
                   deal_value = ?, next_step_on = ?, met_contact = ?, updated_at = datetime('now')
             WHERE id = ?`,
@@ -530,7 +530,7 @@ workRouter.post(
           input.dealValue ?? null, input.nextStepOn ?? null, input.metContact ?? null, fid,
         );
       } else {
-        const r = db
+        const r = await db
           .prepare(
             `INSERT INTO feedback (meeting_id, company_id, salesman_id, outcome, reason_code, reason_note,
                                    sample_requested, deal_value, next_step_on, met_contact)
@@ -544,28 +544,28 @@ workRouter.post(
         fid = Number(r.lastInsertRowid);
       }
 
-      db.prepare(`UPDATE meeting SET status = 'held', updated_at = datetime('now') WHERE id = ? AND status IN ('proposed','scheduled')`).run(input.meetingId);
+      await db.prepare(`UPDATE meeting SET status = 'held', updated_at = datetime('now') WHERE id = ? AND status IN ('proposed','scheduled')`).run(input.meetingId);
       if (meeting.assignment_id) {
-        db.prepare(`UPDATE assignment SET status = 'completed', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(meeting.assignment_id);
+        await db.prepare(`UPDATE assignment SET status = 'completed', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(meeting.assignment_id);
       }
 
       if (input.sampleRequested && input.sampleLines.length) {
-        createOrReplaceSampleRequest({
+        await createOrReplaceSampleRequest({
           feedbackId: fid, companyId: meeting.company_id, salesmanId: meeting.salesman_id, lines: input.sampleLines,
         });
       } else {
-        deleteSampleRequestForFeedback(fid);
+        await deleteSampleRequestForFeedback(fid);
       }
 
       // Outcome drives the stage; approved is finished by syncInvoiceForFeedback.
-      if (input.outcome === 'rejected') setStage(meeting.company_id, 'lost', { force: true, actor: 'salesman', salesmanId: meeting.salesman_id });
-      else if (input.outcome === 'positive') setStage(meeting.company_id, input.sampleRequested ? 'sample_sent' : 'negotiating', { actor: 'salesman', salesmanId: meeting.salesman_id });
+      if (input.outcome === 'rejected') await setStage(meeting.company_id, 'lost', { force: true, actor: 'salesman', salesmanId: meeting.salesman_id });
+      else if (input.outcome === 'positive') await setStage(meeting.company_id, input.sampleRequested ? 'sample_sent' : 'negotiating', { actor: 'salesman', salesmanId: meeting.salesman_id });
 
-      db.prepare(
+      await db.prepare(
         `UPDATE company SET follow_up_on = ?, last_touched_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
       ).run(input.nextStepOn ?? null, meeting.company_id);
 
-      logActivity({
+      await logActivity({
         companyId: meeting.company_id, salesmanId: meeting.salesman_id, kind: 'feedback',
         summary: before ? `Feedback edited — ${input.outcome}` : `Meeting outcome logged — ${input.outcome}`,
         detail: input, actor: 'salesman',
@@ -573,9 +573,9 @@ workRouter.post(
       return fid;
     });
 
-    const invoiceId = syncInvoiceForFeedback(feedbackId);
-    const after = db.prepare('SELECT * FROM feedback WHERE id = ?').get(feedbackId);
-    recordRevision('feedback', feedbackId, before ?? null, after, input.actorId);
+    const invoiceId = await syncInvoiceForFeedback(feedbackId);
+    const after = await db.prepare('SELECT * FROM feedback WHERE id = ?').get(feedbackId);
+    await recordRevision('feedback', feedbackId, before ?? null, after, input.actorId);
 
     res.status(before ? 200 : 201).json({ ...(after as object), invoiceId, edited: Boolean(before) });
   }),
@@ -583,11 +583,11 @@ workRouter.post(
 
 workRouter.get(
   '/feedback/:meetingId',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const meetingId = intParam(req.params.meetingId, 'meetingId');
-    const f = db.prepare('SELECT * FROM feedback WHERE meeting_id = ?').get(meetingId) as any;
+    const f = await db.prepare('SELECT * FROM feedback WHERE meeting_id = ?').get(meetingId) as any;
     if (!f) { res.json(null); return; }
-    f.sampleLines = db
+    f.sampleLines = await db
       .prepare(
         `SELECT sl.product_id AS productId, sl.qty, p.name, p.uom, p.sku
            FROM sample_line sl JOIN product p ON p.id = sl.product_id
@@ -595,15 +595,15 @@ workRouter.get(
           WHERE sr.feedback_id = ?`,
       )
       .all(f.id);
-    f.invoice = db.prepare('SELECT * FROM invoice WHERE feedback_id = ?').get(f.id) ?? null;
-    f.revisions = db.prepare(`SELECT id, created_at FROM revision WHERE entity = 'feedback' AND entity_id = ? ORDER BY id DESC`).all(f.id);
+    f.invoice = await db.prepare('SELECT * FROM invoice WHERE feedback_id = ?').get(f.id) ?? null;
+    f.revisions = await db.prepare(`SELECT id, created_at FROM revision WHERE entity = 'feedback' AND entity_id = ? ORDER BY id DESC`).all(f.id);
     res.json(f);
   }),
 );
 
 workRouter.get(
   '/reason-codes',
-  asyncRoute((_req, res) => {
-    res.json(db.prepare('SELECT * FROM reason_code WHERE active = 1 ORDER BY outcome, sort, label').all());
+  asyncRoute(async (_req, res) => {
+    res.json(await db.prepare('SELECT * FROM reason_code WHERE active = 1 ORDER BY outcome, sort, label').all());
   }),
 );

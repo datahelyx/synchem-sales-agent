@@ -8,8 +8,8 @@ import { seedIfEmpty } from './seed-data.js';
  * outbox drain after credentials appear.
  */
 
-migrate();
-seedIfEmpty();
+await migrate();
+await seedIfEmpty();
 
 const REAL_CONTACT = '+924235990034'; // a genuine number from the imported CSV
 const MY_TEST_NUMBER = '+923001112222';
@@ -21,7 +21,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `\n        expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`}`);
 }
 
-const statusOf = (id: number) => (db.prepare('SELECT status FROM notification WHERE id = ?').get(id) as any).status;
+const statusOf = async (id: number) => (await db.prepare('SELECT status FROM notification WHERE id = ?').get(id) as any).status;
 
 // The test drives each mode itself; .env must not decide the outcome.
 process.env.OUTBOUND_MODE = 'off';
@@ -35,13 +35,13 @@ const blockedId = await notify({
   channel: 'whatsapp', template: 'test', recipientType: 'contact',
   toAddr: REAL_CONTACT, body: 'test message to a real company',
 });
-check('message to a real contact is suppressed, not queued', statusOf(blockedId), 'suppressed');
+check('message to a real contact is suppressed, not queued', await statusOf(blockedId), 'suppressed');
 
 // The dangerous path: credentials turn up later and someone hits "retry".
 process.env.WHATSAPP_TOKEN = 'fake-token-for-this-test';
 process.env.WHATSAPP_PHONE_ID = '000000';
 const drained = await drainOutbox();
-check('outbox drain does not release suppressed messages', statusOf(blockedId), 'suppressed');
+check('outbox drain does not release suppressed messages', await statusOf(blockedId), 'suppressed');
 check('drain reported nothing sent', drained.sent, 0);
 delete process.env.WHATSAPP_TOKEN;
 delete process.env.WHATSAPP_PHONE_ID;
@@ -60,12 +60,12 @@ const redirectedId = await notify({
   channel: 'email', template: 'test', recipientType: 'contact',
   toAddr: 'adeel.javaid@descon.com', subject: 'Meeting confirmation', body: 'Original invite text.',
 });
-const stored = db.prepare('SELECT to_addr, subject FROM notification WHERE id = ?').get(redirectedId) as any;
+const stored = await db.prepare('SELECT to_addr, subject FROM notification WHERE id = ?').get(redirectedId) as any;
 check('the OUTBOX ROW stores the test inbox, not the company', stored.to_addr, 'i221855@nu.edu.pk');
 check('subject is marked as a test', stored.subject.startsWith('[TEST]'), true);
 check(
   'no row anywhere is addressed to the real company',
-  (db.prepare("SELECT COUNT(*) AS n FROM notification WHERE to_addr LIKE '%descon.com'").get() as any).n,
+  (await db.prepare("SELECT COUNT(*) AS n FROM notification WHERE to_addr LIKE '%descon.com'").get() as any).n,
   0,
 );
 check('a salesman message is NOT redirected', resolveRecipient('salesman', null, 'hi').redirected, false);
@@ -81,7 +81,7 @@ const waId = await notify({
   channel: 'whatsapp', template: 'test', recipientType: 'contact',
   toAddr: REAL_CONTACT, body: 'wa test',
 });
-check('that WhatsApp message is suppressed', statusOf(waId), 'suppressed');
+check('that WhatsApp message is suppressed', await statusOf(waId), 'suppressed');
 
 process.env.OUTBOUND_REDIRECT_PHONE = MY_TEST_NUMBER;
 check('with a redirect phone set, WhatsApp is allowed', blockReason('contact', REAL_CONTACT, 'whatsapp'), null);
@@ -105,7 +105,7 @@ check('live mode allows a real contact', blockReason('contact', REAL_CONTACT), n
 
 process.env.OUTBOUND_MODE = 'off';
 delete process.env.OUTBOUND_REDIRECT_TO;
-db.prepare('DELETE FROM notification WHERE template = ?').run('test');
+await db.prepare('DELETE FROM notification WHERE template = ?').run('test');
 
 console.log(`\n${failures === 0 ? 'All guard checks passed.' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

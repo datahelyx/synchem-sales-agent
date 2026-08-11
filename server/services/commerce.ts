@@ -9,7 +9,7 @@ export interface SampleLineInput {
   qty: number;
 }
 
-export function createOrReplaceSampleRequest(input: {
+export async function createOrReplaceSampleRequest(input: {
   feedbackId: number | null;
   companyId: number;
   salesmanId: number;
@@ -17,23 +17,23 @@ export function createOrReplaceSampleRequest(input: {
   courier?: string | null;
   trackingRef?: string | null;
 }) {
-  return tx(() => {
+  return await tx(async () => {
     // Editing feedback can change the sample list, so replace rather than
     // append — and reverse the old stock movements first so on-hand is right.
     const existing = input.feedbackId
-      ? (db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(input.feedbackId) as any)
+      ? (await db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(input.feedbackId) as any)
       : null;
 
     let requestId: number;
     if (existing) {
       requestId = existing.id;
-      reverseStock('sample_request', requestId);
-      db.prepare('DELETE FROM sample_line WHERE sample_request_id = ?').run(requestId);
-      db.prepare(
+      await reverseStock('sample_request', requestId);
+      await db.prepare('DELETE FROM sample_line WHERE sample_request_id = ?').run(requestId);
+      await db.prepare(
         `UPDATE sample_request SET courier = ?, tracking_ref = ?, updated_at = datetime('now') WHERE id = ?`,
       ).run(input.courier ?? null, input.trackingRef ?? null, requestId);
     } else {
-      const r = db
+      const r = await db
         .prepare(
           `INSERT INTO sample_request (feedback_id, company_id, salesman_id, courier, tracking_ref)
            VALUES (?, ?, ?, ?, ?)`,
@@ -48,12 +48,12 @@ export function createOrReplaceSampleRequest(input: {
     for (const l of input.lines) {
       if (!l.productId || !(l.qty > 0)) continue;
       insLine.run(requestId, l.productId, l.qty);
-      moveStock(l.productId, -l.qty, 'sample_dispatch', 'sample_request', requestId);
+      await moveStock(l.productId, -l.qty, 'sample_dispatch', 'sample_request', requestId);
     }
 
     if (input.lines.length) {
-      setStage(input.companyId, 'sample_sent', { salesmanId: input.salesmanId, actor: 'salesman' });
-      logActivity({
+      await setStage(input.companyId, 'sample_sent', { salesmanId: input.salesmanId, actor: 'salesman' });
+      await logActivity({
         companyId: input.companyId,
         salesmanId: input.salesmanId,
         kind: 'sample',
@@ -66,36 +66,36 @@ export function createOrReplaceSampleRequest(input: {
   });
 }
 
-export function deleteSampleRequestForFeedback(feedbackId: number) {
-  const existing = db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(feedbackId) as any;
+export async function deleteSampleRequestForFeedback(feedbackId: number) {
+  const existing = await db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(feedbackId) as any;
   if (!existing) return;
-  tx(() => {
-    reverseStock('sample_request', existing.id);
-    db.prepare('DELETE FROM sample_request WHERE id = ?').run(existing.id);
+  await tx(async () => {
+    await reverseStock('sample_request', existing.id);
+    await db.prepare('DELETE FROM sample_request WHERE id = ?').run(existing.id);
   });
 }
 
-function moveStock(productId: number, qty: number, reason: string, refTable: string, refId: number) {
-  db.prepare(
+async function moveStock(productId: number, qty: number, reason: string, refTable: string, refId: number) {
+  await db.prepare(
     'INSERT INTO stock_move (product_id, qty, reason, ref_table, ref_id) VALUES (?, ?, ?, ?, ?)',
   ).run(productId, qty, reason, refTable, refId);
-  db.prepare(`UPDATE product SET stock_qty = stock_qty + ?, updated_at = datetime('now') WHERE id = ?`).run(qty, productId);
+  await db.prepare(`UPDATE product SET stock_qty = stock_qty + ?, updated_at = datetime('now') WHERE id = ?`).run(qty, productId);
 }
 
 /** Undo every movement tied to a record, so an edit cannot double-count stock. */
-function reverseStock(refTable: string, refId: number) {
-  const moves = db
+async function reverseStock(refTable: string, refId: number) {
+  const moves = await db
     .prepare('SELECT product_id, SUM(qty) AS qty FROM stock_move WHERE ref_table = ? AND ref_id = ? GROUP BY product_id')
     .all(refTable, refId) as any[];
   for (const m of moves) {
     if (!m.qty) continue;
-    moveStock(m.product_id, -m.qty, 'adjustment', refTable, refId);
+    await moveStock(m.product_id, -m.qty, 'adjustment', refTable, refId);
   }
 }
 
-function nextInvoiceNumber(): string {
+async function nextInvoiceNumber(): Promise<string> {
   const year = today().slice(0, 4);
-  const row = db
+  const row = await db
     .prepare(`SELECT number FROM invoice WHERE number LIKE ? ORDER BY id DESC LIMIT 1`)
     .get(`INV-${year}-%`) as any;
   const seq = row ? Number(String(row.number).split('-').pop()) + 1 : 1;
@@ -108,16 +108,16 @@ function nextInvoiceNumber(): string {
  * one, and flipping the outcome away from approved cancels it (never deletes —
  * a cancelled invoice is auditable, a missing one is not).
  */
-export function syncInvoiceForFeedback(feedbackId: number) {
-  const f = db.prepare('SELECT * FROM feedback WHERE id = ?').get(feedbackId) as any;
+export async function syncInvoiceForFeedback(feedbackId: number) {
+  const f = await db.prepare('SELECT * FROM feedback WHERE id = ?').get(feedbackId) as any;
   if (!f) return null;
 
-  const existing = db.prepare('SELECT * FROM invoice WHERE feedback_id = ?').get(feedbackId) as any;
+  const existing = await db.prepare('SELECT * FROM invoice WHERE feedback_id = ?').get(feedbackId) as any;
 
   if (f.outcome !== 'approved') {
     if (existing && existing.status !== 'cancelled') {
-      db.prepare(`UPDATE invoice SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`).run(existing.id);
-      logActivity({
+      await db.prepare(`UPDATE invoice SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`).run(existing.id);
+      await logActivity({
         companyId: f.company_id,
         salesmanId: f.salesman_id,
         kind: 'invoice',
@@ -132,23 +132,23 @@ export function syncInvoiceForFeedback(feedbackId: number) {
   const taxRate = Number(process.env.TAX_RATE ?? 0);
   const total = amount * (1 + taxRate);
 
-  return tx(() => {
+  return await tx(async () => {
     let invoiceId: number;
     if (existing) {
       invoiceId = existing.id;
-      db.prepare(
+      await db.prepare(
         `UPDATE invoice SET subtotal = ?, tax_rate = ?, total = ?, status = CASE WHEN status = 'cancelled' THEN 'draft' ELSE status END,
                 updated_at = datetime('now')
           WHERE id = ?`,
       ).run(amount, taxRate, total, invoiceId);
-      db.prepare('DELETE FROM invoice_line WHERE invoice_id = ?').run(invoiceId);
+      await db.prepare('DELETE FROM invoice_line WHERE invoice_id = ?').run(invoiceId);
 
       // Without this the timeline's last word on an invoice stays "cancelled"
       // even after the outcome flips back to approved.
       const reinstated = existing.status === 'cancelled';
       const repriced = Number(existing.subtotal) !== amount;
       if (reinstated || repriced) {
-        logActivity({
+        await logActivity({
           companyId: f.company_id,
           salesmanId: f.salesman_id,
           kind: 'invoice',
@@ -160,15 +160,15 @@ export function syncInvoiceForFeedback(feedbackId: number) {
         });
       }
     } else {
-      const number = nextInvoiceNumber();
-      const r = db
+      const number = await nextInvoiceNumber();
+      const r = await db
         .prepare(
           `INSERT INTO invoice (number, company_id, salesman_id, feedback_id, due_date, subtotal, tax_rate, total)
            VALUES (?, ?, ?, ?, date('now', '+30 day'), ?, ?, ?)`,
         )
         .run(number, f.company_id, f.salesman_id, feedbackId, amount, taxRate, total);
       invoiceId = Number(r.lastInsertRowid);
-      logActivity({
+      await logActivity({
         companyId: f.company_id,
         salesmanId: f.salesman_id,
         kind: 'invoice',
@@ -188,9 +188,9 @@ export function syncInvoiceForFeedback(feedbackId: number) {
      * real order (quantities against SKUs), the honest invoice is the agreed
      * figure, with the samples named for context only.
      */
-    const sample = db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(feedbackId) as any;
+    const sample = await db.prepare('SELECT * FROM sample_request WHERE feedback_id = ?').get(feedbackId) as any;
     const sampled = sample
-      ? (db
+      ? (await db
           .prepare(
             `SELECT p.name FROM sample_line sl JOIN product p ON p.id = sl.product_id
               WHERE sl.sample_request_id = ?`,
@@ -202,11 +202,11 @@ export function syncInvoiceForFeedback(feedbackId: number) {
       ? `Agreed supply following evaluation of ${sampled.join(', ')}`
       : 'Agreed supply — see meeting notes';
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO invoice_line (invoice_id, product_id, description, qty, unit_price, amount) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(invoiceId, null, description, 1, amount, amount);
 
-    setStage(f.company_id, 'won', { salesmanId: f.salesman_id, actor: 'salesman' });
+    await setStage(f.company_id, 'won', { salesmanId: f.salesman_id, actor: 'salesman' });
     return invoiceId;
   });
 }
