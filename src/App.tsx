@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, type NotificationRow } from './lib/api';
 import { initials } from './lib/format';
+import { Logo } from './components/Logo';
 import { useSession } from './session';
 import { AgentConsole } from './pages/AgentConsole';
 import { Calendar } from './pages/Calendar';
@@ -81,20 +82,11 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
       }`}
     >
       <div className="flex items-center justify-between px-5 py-4">
-        <div className="flex items-center gap-2.5">
-          {/* SynChem's mark is navy with a red and a cyan accent; echoed here
-              rather than shipping their logo file into the repo. */}
-          <span className="relative grid h-9 w-9 place-items-center rounded-lg bg-brand-700 text-white">
-            <Bot size={18} />
-            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent-500" />
-          </span>
-          <div>
-            <p className="text-sm font-semibold leading-tight text-slate-900">
-              Sales Agent
-            </p>
-            {/* marine-700, not 600: at 12px the lighter step only reaches 4.25:1. */}
-            <p className="text-xs font-medium text-marine-700">SynChem Global</p>
-          </div>
+        <div className="min-w-0">
+          <Logo />
+          <p className="mt-2 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+            Sales Agent
+          </p>
         </div>
         <button className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 lg:hidden" onClick={onClose} aria-label="Close menu">
           <X size={18} />

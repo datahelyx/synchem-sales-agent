@@ -1,4 +1,5 @@
 import { db } from '../db/index.js';
+import { renderEmail, type EmailBlocks } from './email-template.js';
 
 /**
  * Every outbound message is written to the `notification` outbox first, then a
@@ -83,7 +84,7 @@ export function resolveRecipient(
   toAddr: string | null | undefined,
   body: string,
   channel: Channel = 'email',
-): { toAddr: string | null; body: string; redirected: boolean } {
+): { toAddr: string | null; body: string; redirected: boolean; bannerText?: string } {
   if (recipientType !== 'contact' || outboundMode() !== 'redirect') {
     return { toAddr: toAddr ?? null, body, redirected: false };
   }
@@ -94,7 +95,12 @@ export function resolveRecipient(
     `[TEST REDIRECT] This message was addressed to ${toAddr ?? 'an unknown recipient'} ` +
     `and was rerouted to you. The real contact was NOT messaged.\n` +
     `${'-'.repeat(64)}\n\n`;
-  return { toAddr: target, body: banner + body, redirected: true };
+  return {
+    toAddr: target,
+    body: banner + body,
+    redirected: true,
+    bannerText: `Test redirect — addressed to ${toAddr ?? 'an unknown recipient'}, who was not contacted.`,
+  };
 }
 
 function allowlist(): string[] {
@@ -148,6 +154,12 @@ export interface OutboundMessage {
   payload?: unknown;
   /** Email only — a calendar invite rides along here. Never persisted. */
   attachments?: Attachment[];
+  /**
+   * Structured content for the HTML email. The plain `body` is still required
+   * and is what gets stored and shown in the in-app outbox; this only changes
+   * how the email itself looks.
+   */
+  email?: EmailBlocks;
 }
 
 export interface ChannelAdapter {
@@ -225,10 +237,11 @@ registerAdapter({
     });
 
     await transport.sendMail({
-      from: process.env.SMTP_FROM ?? user,
+      from: `SynChem Global <${process.env.SMTP_FROM ?? user}>`,
       to: m.toAddr,
       subject: m.subject ?? 'Message from SynChem',
       text: m.body,
+      ...(m.email ? { html: renderEmail(m.email) } : {}),
       // A text/calendar part is what makes Gmail and Outlook show "Add to
       // calendar" and then run their own reminders on the recipient's device.
       ...(m.attachments?.length
@@ -256,7 +269,13 @@ export async function notify(msg: OutboundMessage): Promise<number> {
   // went rather than where it was originally aimed.
   const routed = resolveRecipient(msg.recipientType, msg.toAddr, msg.body, msg.channel);
   const subject = routed.redirected ? `[TEST] ${msg.subject ?? ''}`.trim() : msg.subject ?? null;
-  const outgoing: OutboundMessage = { ...msg, toAddr: routed.toAddr, body: routed.body, subject };
+  const outgoing: OutboundMessage = {
+    ...msg,
+    toAddr: routed.toAddr,
+    body: routed.body,
+    subject,
+    email: msg.email ? { ...msg.email, banner: routed.bannerText ?? msg.email.banner } : undefined,
+  };
 
   const row = await db
     .prepare(

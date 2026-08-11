@@ -301,6 +301,29 @@ async function sendSalesmanInvite(meetingId: number, method: 'REQUEST' | 'CANCEL
           `Add the attached invite to your calendar — it carries its own reminders.`,
     payload: { meetingId },
     attachments: await calendarAttachment(meetingId, method),
+    email:
+      method === 'CANCEL'
+        ? {
+            kicker: 'Meeting cancelled',
+            heading: `${m.company_name} — cancelled`,
+            intro: `The meeting on ${whenLabel(m.scheduled_at)} is off, and has been removed from your calendar.`,
+          }
+        : {
+            kicker: `${verb} scheduled`,
+            heading: m.company_name,
+            intro: 'This is on your calendar. The attached invite carries its own reminders.',
+            details: [
+              { label: 'When', value: whenLabel(m.scheduled_at), strong: true },
+              { label: 'Where', value: m.location || m.area || 'their office' },
+              {
+                label: 'Who',
+                value:
+                  ([m.contact_title, m.contact_name].filter(Boolean).join(' ') || 'contact not recorded') +
+                  (m.phone_e164 ? ` · ${m.phone_e164}` : ''),
+              },
+            ],
+            footnote: 'Log the outcome in the app afterwards so the deal keeps moving.',
+          },
   });
 }
 
@@ -341,6 +364,20 @@ async function notifyManagers(meetingId: number, method: 'REQUEST' | 'CANCEL' = 
         subject: `${method === 'CANCEL' ? 'Cancelled' : 'Meeting'} — ${title}`,
         body: `${title}\n${whenLabel(m.scheduled_at)}\n\nAdded to your calendar for visibility. You will not be reminded about it.`,
         payload: { meetingId },
+        email: {
+          kicker: method === 'CANCEL' ? 'Meeting cancelled' : 'Meeting booked',
+          heading: title,
+          intro:
+            method === 'CANCEL'
+              ? 'This meeting has been cancelled and removed from your calendar.'
+              : 'Added to your calendar so you can see it. You will not be sent reminders for it.',
+          details: [
+            { label: 'When', value: whenLabel(m.scheduled_at), strong: true },
+            ...(m.location || m.area ? [{ label: 'Where', value: m.location || m.area }] : []),
+            { label: 'Salesman', value: m.salesman_name },
+            { label: 'Company', value: m.company_name },
+          ],
+        },
         // No alarms: it shows on the manager's calendar without nagging them.
         attachments: await (async () => {
           const ics = await icsForMeeting(meetingId, { method, alarms: [] });
@@ -394,11 +431,31 @@ async function inviteContact(meetingId: number) {
     reached = true;
   }
   if (m.email) {
+    const verb = (m.mode ?? 'onsite') === 'onsite' ? 'Visit' : m.mode === 'call' ? 'Call' : 'Video call';
     await notify({
       channel: 'email', template: 'contact_meeting_invite', recipientType: 'contact',
       recipientId: m.company_id, toAddr: m.email, subject: `Meeting confirmation — ${when}`, body,
       payload: { meetingId },
       attachments: await calendarAttachment(meetingId),
+      email: {
+        kicker: 'Meeting confirmation',
+        heading: `Assalam-o-Alaikum ${greeting}`,
+        intro: `This confirms our meeting regarding ${m.company_name}. The details are below — the invite attached to this email will add it to your calendar.`,
+        details: [
+          { label: 'When', value: when, strong: true },
+          ...(m.location || m.area ? [{ label: 'Where', value: m.location || m.area }] : []),
+          { label: 'Type', value: verb === 'Visit' ? 'In-person visit' : verb },
+          {
+            label: 'Attending',
+            value: `${m.salesman_name}, SynChem Global${m.salesman_phone ? ` · ${m.salesman_phone}` : ''}`,
+          },
+        ],
+        paragraphs: m.booking_url
+          ? ['If another time suits you better, you can pick one directly:']
+          : ['Please let us know if another time would suit you better.'],
+        ...(m.booking_url ? { cta: { label: 'Choose a different time', url: m.booking_url } } : {}),
+        footnote: 'Reply to this email to reach us directly.',
+      },
     });
     reached = true;
   }
