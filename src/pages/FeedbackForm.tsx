@@ -76,7 +76,18 @@ export function FeedbackForm({
     );
   }
 
-  const valid = Boolean(outcome) && (outcome !== 'approved' || Number(dealValue) > 0);
+  /* A sample line with a blank or zero quantity is rejected by the API
+   * (`qty` must be positive), which surfaced as a generic "some fields need
+   * fixing". Catch it here instead, where we can say which product it is. */
+  const badQtyLine = sampleRequested ? lines.find((l) => !(l.qty > 0)) : undefined;
+  const badQtyName = badQtyLine ? productById.get(badQtyLine.productId)?.name : undefined;
+  const noProductsPicked = sampleRequested && lines.length === 0;
+
+  const valid =
+    Boolean(outcome) &&
+    (outcome !== 'approved' || Number(dealValue) > 0) &&
+    !badQtyLine &&
+    !noProductsPicked;
 
   async function submit() {
     if (!meetingId || !outcome) return;
@@ -221,6 +232,13 @@ export function FeedbackForm({
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-medium text-slate-800">{p.name}</span>
                               <span className="block text-xs text-slate-500">{p.sku} · in stock {p.stock_qty} {p.uom}</span>
+                              {/* Dispatching more than is on hand is allowed — the ledger
+                                  records it honestly — but the salesman should know. */}
+                              {l.qty > p.stock_qty && (
+                                <span className="block text-xs font-medium text-amber-700">
+                                  More than the {p.stock_qty} {p.uom} on hand — stock will go negative.
+                                </span>
+                              )}
                             </span>
                             <input
                               className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm"
@@ -243,6 +261,16 @@ export function FeedbackForm({
                       })}
                     </ul>
                   )}
+
+                  {badQtyName ? (
+                    <p className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      Enter a quantity greater than zero for <span className="font-semibold">{badQtyName}</span>, or remove it.
+                    </p>
+                  ) : noProductsPicked ? (
+                    <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Pick at least one product, or choose “No sample needed” above.
+                    </p>
+                  ) : null}
 
                   <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white">
                     {productList.length === 0 ? (

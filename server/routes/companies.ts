@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db/index.js';
+import { isValidDateOnly } from '../lib/dates.js';
 import { asyncRoute, HttpError, intParam, parseBody } from '../lib/http.js';
 import { nameKey, dataQuality, toE164Pk } from '../lib/normalize.js';
 import { logActivity, recordRevision, setStage, STAGES } from '../services/pipeline.js';
@@ -121,7 +122,11 @@ const companyPatch = z.object({
   notes: z.string().nullable().optional(),
   stage: z.enum(STAGES).optional(),
   owner_id: z.number().int().nullable().optional(),
-  follow_up_on: z.string().nullable().optional(),
+  follow_up_on: z
+    .string()
+    .refine((v) => v === '' || isValidDateOnly(v), 'Use a YYYY-MM-DD date')
+    .nullable()
+    .optional(),
   do_not_contact: z.boolean().optional(),
   actorId: z.number().int().optional(),
 });

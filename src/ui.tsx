@@ -52,6 +52,12 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
   const [loading, setLoading] = useState(Boolean(path));
   const [nonce, setNonce] = useState(0);
   const alive = useRef(true);
+  /* Every request takes a ticket. Only the newest one may write state, so a
+   * slow reply for an old path can never overwrite a newer one — that is how a
+   * stale filter result, or one meeting's feedback, ends up on screen under a
+   * different heading. */
+  const ticket = useRef(0);
+  const lastPath = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     alive.current = true;
@@ -59,13 +65,24 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
   }, []);
 
   useEffect(() => {
+    const mine = ++ticket.current;
+
+    // A different path is a different resource. Drop the previous answer so no
+    // consumer reads record A's data while record B is still loading. A manual
+    // refresh() keeps the current data on screen while it reloads.
+    if (lastPath.current !== path) {
+      lastPath.current = path;
+      setData(null);
+      setError(null);
+    }
+
     if (!path) { setLoading(false); return; }
     setLoading(true);
     api
       .get<T>(path)
-      .then((d) => { if (alive.current) { setData(d); setError(null); } })
-      .catch((e) => { if (alive.current) setError(e.message); })
-      .finally(() => { if (alive.current) setLoading(false); });
+      .then((d) => { if (alive.current && ticket.current === mine) { setData(d); setError(null); } })
+      .catch((e) => { if (alive.current && ticket.current === mine) setError(e.message); })
+      .finally(() => { if (alive.current && ticket.current === mine) setLoading(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, nonce, ...deps]);
 

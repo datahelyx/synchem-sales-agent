@@ -231,7 +231,7 @@ export async function runWeeklyAssignment(opts: RunOptions = {}) {
     for (const r of results) {
       if (!r.picks.length) continue;
       const s = salesmen.find((x) => x.id === r.salesmanId)!;
-      const body = buildAssignmentMessage(s.name, week, r.picks);
+      const body = await buildAssignmentMessage(s.name, week, r.picks);
       await notify({
         channel: 'inapp',
         template: 'weekly_assignment',
@@ -265,15 +265,21 @@ export async function runWeeklyAssignment(opts: RunOptions = {}) {
   return { week, weekLabel: weekLabel(week), created, skipped, notified, results };
 }
 
-function buildAssignmentMessage(name: string, week: string, picks: AssignmentPick[]): string {
-  const lines = picks.map(async (p, i) => {
-    const c = await db.prepare('SELECT * FROM company WHERE id = ?').get(p.companyId) as any;
-    const who = [c.contact_title, c.contact_name].filter(Boolean).join(' ');
-    const detail = [who && `contact ${who}`, c.phone_e164 && prettyPhone(c.phone_e164), c.area, c.industry]
-      .filter(Boolean)
-      .join(' · ');
-    return `${i + 1}. ${c.name}\n   ${detail}\n   Why you: ${p.reason}`;
-  });
+async function buildAssignmentMessage(name: string, week: string, picks: AssignmentPick[]): Promise<string> {
+  // Each line needs a database read, so the whole list is resolved before it is
+  // joined — mapping to promises and joining them straight away renders every
+  // company as "[object Promise]".
+  const lines = await Promise.all(
+    picks.map(async (p, i) => {
+      const c = await db.prepare('SELECT * FROM company WHERE id = ?').get(p.companyId) as any;
+      if (!c) return `${i + 1}. (company removed)\n   Why you: ${p.reason}`;
+      const who = [c.contact_title, c.contact_name].filter(Boolean).join(' ');
+      const detail = [who && `contact ${who}`, c.phone_e164 && prettyPhone(c.phone_e164), c.area, c.industry]
+        .filter(Boolean)
+        .join(' · ');
+      return `${i + 1}. ${c.name}\n   ${detail}\n   Why you: ${p.reason}`;
+    }),
+  );
   return [
     `Hi ${name.split(' ')[0]}, here are your ${picks.length} companies for ${weekLabel(week)}:`,
     '',

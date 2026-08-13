@@ -31,12 +31,40 @@ export function intParam(value: unknown, name = 'id'): number {
   return n;
 }
 
+/**
+ * Turns anything thrown in a route into a JSON response.
+ *
+ * Database driver errors are translated rather than forwarded: a unique-index
+ * violation is a 409 the user can act on, and echoing
+ * "SQLITE_CONSTRAINT: UNIQUE constraint failed: product.sku" back to the
+ * browser both reads as a crash and hands out the schema. The full error is
+ * still logged server-side.
+ */
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof HttpError) {
     res.status(err.status).json({ error: err.message, detail: err.detail });
     return;
   }
+
   console.error(err);
-  const message = err instanceof Error ? err.message : 'Something went wrong';
-  res.status(500).json({ error: message });
+  const raw = err instanceof Error ? err.message : '';
+
+  if (/UNIQUE constraint failed/i.test(raw)) {
+    res.status(409).json({ error: 'That value is already taken by another record.' });
+    return;
+  }
+  if (/FOREIGN KEY constraint failed/i.test(raw)) {
+    res.status(409).json({ error: 'That record is still referenced by something else.' });
+    return;
+  }
+  if (/CHECK constraint failed/i.test(raw)) {
+    res.status(400).json({ error: 'That value is not one this field accepts.' });
+    return;
+  }
+  if (/SQLITE_|LIBSQL_|no such (table|column)/i.test(raw)) {
+    res.status(500).json({ error: 'The database rejected that request. Check the server log for details.' });
+    return;
+  }
+
+  res.status(500).json({ error: raw || 'Something went wrong' });
 }

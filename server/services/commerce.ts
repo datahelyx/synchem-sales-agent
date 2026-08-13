@@ -47,7 +47,7 @@ export async function createOrReplaceSampleRequest(input: {
     );
     for (const l of input.lines) {
       if (!l.productId || !(l.qty > 0)) continue;
-      insLine.run(requestId, l.productId, l.qty);
+      await insLine.run(requestId, l.productId, l.qty);
       await moveStock(l.productId, -l.qty, 'sample_dispatch', 'sample_request', requestId);
     }
 
