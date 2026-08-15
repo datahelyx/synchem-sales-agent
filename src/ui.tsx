@@ -3,6 +3,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from './lib/api';
 
 /* --------------------------------------------------------------- toasts */
@@ -186,8 +187,27 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4">
+  /*
+   * Rendered into <body>, not where it sits in the tree.
+   *
+   * `position: fixed` is only relative to the viewport while no ancestor
+   * creates a containing block — and backdrop-filter does exactly that. The
+   * notification dialog lives inside the sticky top bar, which carries
+   * `backdrop-blur`, so `inset-0` resolved to that ~62px-tall bar: the panel
+   * was centred on the header, its title and close button ended up above the
+   * top of the screen, and there was no way to shut it. A portal keeps the
+   * dialog independent of whatever styling surrounds its call site.
+   */
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4"
+      /*
+       * Clicking the dark area closes. mousedown rather than click, and only
+       * when the press starts on the backdrop itself, so selecting text inside
+       * the panel and releasing outside it does not dismiss the dialog.
+       */
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div
         className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-lift sm:rounded-2xl ${
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'
@@ -208,7 +228,8 @@ export function Modal({
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && <div className="border-t border-slate-200 bg-slate-50 px-5 py-3">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

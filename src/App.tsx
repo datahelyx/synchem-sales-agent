@@ -1,5 +1,5 @@
 import {
-  Bell, Boxes, Building2, CalendarCheck, CalendarDays, ChevronDown, FileText, LayoutDashboard,
+  ArrowLeft, Bell, Boxes, Building2, CalendarCheck, CalendarDays, ChevronDown, FileText, LayoutDashboard,
   Menu, Bot, Upload, Users, X, ClipboardList,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -226,17 +226,25 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         title="Notifications"
         subtitle={current ? `Messages the agent sent to ${current.name}` : undefined}
         footer={
-          unread > 0 ? (
-            <button
-              className="btn-ghost w-full"
-              onClick={async () => {
-                if (current) await api.post('/notifications/read-all', { recipientId: current.id });
-                refresh();
-              }}
-            >
-              Mark all as read
+          /* Back is always offered — on a phone the close X at the top is a
+             long scroll away once there are a few messages. */
+          <div className="flex gap-2">
+            <button className="btn-ghost flex-1" onClick={() => { setBellOpen(false); refresh(); }}>
+              <ArrowLeft size={16} />
+              Back
             </button>
-          ) : null
+            {unread > 0 && (
+              <button
+                className="btn-ghost flex-1"
+                onClick={async () => {
+                  if (current) await api.post('/notifications/read-all', { recipientId: current.id });
+                  refresh();
+                }}
+              >
+                Mark all as read
+              </button>
+            )}
+          </div>
         }
       >
         {!notes?.length ? (

@@ -12,8 +12,10 @@
     "db:reset": "tsx server/scripts/reset.ts",
     "import:csv": "tsx server/scripts/import-csv.ts",
     "check:data": "tsx server/scripts/check.ts",
+    "fix:notifications": "tsx server/scripts/dedupe-notifications.ts",
     "test:guard": "tsx server/scripts/outbound-guard-test.ts",
-    "test:email": "tsx server/scripts/test-email.ts"
+    "test:email": "tsx server/scripts/test-email.ts",
+    "fix:messages": "tsx server/scripts/repair-assignment-bodies.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
