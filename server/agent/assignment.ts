@@ -231,7 +231,7 @@ export async function runWeeklyAssignment(opts: RunOptions = {}) {
     for (const r of results) {
       if (!r.picks.length) continue;
       const s = salesmen.find((x) => x.id === r.salesmanId)!;
-      const body = buildAssignmentMessage(s.name, week, r.picks);
+      const body = await buildAssignmentMessage(s.name, week, r.picks);
       await notify({
         channel: 'inapp',
         template: 'weekly_assignment',
@@ -265,15 +265,21 @@ export async function runWeeklyAssignment(opts: RunOptions = {}) {
   return { week, weekLabel: weekLabel(week), created, skipped, notified, results };
 }
 
-function buildAssignmentMessage(name: string, week: string, picks: AssignmentPick[]): string {
-  const lines = picks.map(async (p, i) => {
-    const c = await db.prepare('SELECT * FROM company WHERE id = ?').get(p.companyId) as any;
-    const who = [c.contact_title, c.contact_name].filter(Boolean).join(' ');
-    const detail = [who && `contact ${who}`, c.phone_e164 && prettyPhone(c.phone_e164), c.area, c.industry]
-      .filter(Boolean)
-      .join(' · ');
-    return `${i + 1}. ${c.name}\n   ${detail}\n   Why you: ${p.reason}`;
-  });
+export async function buildAssignmentMessage(name: string, week: string, picks: AssignmentPick[]): Promise<string> {
+  // Each line needs a database read, so the whole list is resolved before it is
+  // joined — mapping to promises and joining them straight away renders every
+  // company as "[object Promise]".
+  const lines = await Promise.all(
+    picks.map(async (p, i) => {
+      const c = await db.prepare('SELECT * FROM company WHERE id = ?').get(p.companyId) as any;
+      if (!c) return `${i + 1}. (company removed)\n   Why you: ${p.reason}`;
+      const who = [c.contact_title, c.contact_name].filter(Boolean).join(' ');
+      const detail = [who && `contact ${who}`, c.phone_e164 && prettyPhone(c.phone_e164), c.area, c.industry]
+        .filter(Boolean)
+        .join(' · ');
+      return `${i + 1}. ${c.name}\n   ${detail}\n   Why you: ${p.reason}`;
+    }),
+  );
   return [
     `Hi ${name.split(' ')[0]}, here are your ${picks.length} companies for ${weekLabel(week)}:`,
     '',
@@ -296,6 +302,13 @@ function buildAssignmentMessage(name: string, week: string, picks: AssignmentPic
  */
 const DAY_BEFORE_HOURS = Number(process.env.REMIND_DAY_BEFORE_HOURS ?? 24);
 const HOURS_BEFORE = Number(process.env.REMIND_HOURS_BEFORE ?? 2);
+/**
+ * A meeting with no outcome logged stays overdue until someone fills the form,
+ * so this nudge is the one reminder that can legitimately repeat. It must still
+ * be rate-limited: at a 15-minute sweep, "every time" means 96 identical
+ * notifications a day for a single meeting.
+ */
+const FEEDBACK_NUDGE_HOURS = Number(process.env.FEEDBACK_NUDGE_HOURS ?? 24);
 
 async function meetingsDueForReminder(column: string, withinHours: number) {
   return await db
@@ -311,6 +324,13 @@ async function meetingsDueForReminder(column: string, withinHours: number) {
           AND datetime(m.scheduled_at) <= datetime('now', '+${withinHours} hours')`,
     )
     .all() as any[];
+}
+
+/** SQLite datetimes come back as UTC 'YYYY-MM-DD HH:MM:SS', with no zone marker. */
+function nudgeWindowPassed(stamp: string): boolean {
+  const last = new Date(stamp.replace(' ', 'T') + 'Z').getTime();
+  if (Number.isNaN(last)) return true; // unreadable stamp — treat as due, never stuck
+  return Date.now() - last >= FEEDBACK_NUDGE_HOURS * 3_600_000;
 }
 
 function meetingTimeLabel(iso: string) {
@@ -405,7 +425,14 @@ export async function runReminderSweep(trigger: 'manual' | 'cron' = 'manual') {
     )
     .all() as any[];
 
-  for (const m of overdue) {
+  // Everything above stays overdue until feedback exists; only the ones outside
+  // the nudge window are told again. `feedback_nudged_at` is stamped below, the
+  // same way the two timed reminders guard themselves.
+  const dueForNudge = overdue.filter(
+    (m) => !m.feedback_nudged_at || nudgeWindowPassed(m.feedback_nudged_at),
+  );
+
+  for (const m of dueForNudge) {
     await notify({
       channel: 'inapp',
       template: 'feedback_due',
@@ -415,13 +442,14 @@ export async function runReminderSweep(trigger: 'manual' | 'cron' = 'manual') {
       body: `Your meeting with ${m.company_name} has passed. Log the outcome so the deal can move forward — it takes about 20 seconds.`,
       payload: { meetingId: m.id },
     });
+    await db.prepare(`UPDATE meeting SET feedback_nudged_at = datetime('now') WHERE id = ?`).run(m.id);
     notified++;
   }
 
   await db.prepare(
     `INSERT INTO agent_run (kind, trigger, created, skipped, notified, detail_json)
      VALUES ('reminder_sweep', ?, 0, 0, ?, ?)`,
-  ).run(trigger, notified, JSON.stringify({ overdue: overdue.length, notified }));
+  ).run(trigger, notified, JSON.stringify({ overdue: overdue.length, nudged: dueForNudge.length, notified }));
 
   return { overdue: overdue.length, notified };
 }

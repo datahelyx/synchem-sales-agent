@@ -41,7 +41,34 @@ export function ensureReady(): Promise<void> {
   return ready;
 }
 
+/**
+ * Configuration that is fine on a laptop and dangerous once this is reachable
+ * from anywhere. Printed once per process so it shows up in a deploy log, where
+ * the person who can actually fix it will see it.
+ */
+function warnAboutConfig() {
+  const notes: string[] = [];
+
+  if (!process.env.CRON_SECRET) {
+    notes.push('CRON_SECRET is not set — /api/cron/* can be triggered by anyone who can reach this server.');
+  }
+  if ((process.env.OUTBOUND_MODE ?? 'off').toLowerCase() === 'live') {
+    notes.push('OUTBOUND_MODE=live — real company contacts WILL be messaged.');
+  }
+  if (isRemote && !process.env.TURSO_AUTH_TOKEN) {
+    notes.push('TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is not.');
+  }
+
+  if (notes.length) {
+    console.warn('\nConfiguration warnings:');
+    for (const n of notes) console.warn(`  ! ${n}`);
+    console.warn('  (this build has no login: anyone who can reach it can act as anyone)\n');
+  }
+}
+
 export function createApp(): Express {
+  warnAboutConfig();
+
   const app = express();
   app.use(express.json({ limit: '5mb' }));
 

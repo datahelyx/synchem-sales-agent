@@ -244,8 +244,8 @@ export async function importCompanies(buf: Buffer, filename: string, opts: { dry
       const upd = db.prepare(UPDATE_SQL);
       for (const { row, action } of plan) {
         if (action === 'skip') continue;
-        if (action === 'insert') ins.run({ ...row.values, batch_id: batchId });
-        else upd.run(row.values);
+        if (action === 'insert') await ins.run({ ...row.values, batch_id: batchId });
+        else await upd.run(row.values);
       }
     });
   }

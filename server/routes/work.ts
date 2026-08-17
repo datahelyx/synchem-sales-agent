@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db, tx } from '../db/index.js';
-import { weekLabel, weekStart } from '../lib/dates.js';
+import { isValidDateOnly, isValidDateTime, weekLabel, weekStart } from '../lib/dates.js';
 import { asyncRoute, HttpError, intParam, parseBody } from '../lib/http.js';
 import { bumpIcsSequence, icsForMeeting } from '../services/calendar.js';
 import { busyBlocks, googleAccount, pushMeeting, removeMeeting } from '../services/google.js';
@@ -175,7 +175,7 @@ const meetingInput = z.object({
   assignmentId: z.number().int().nullable().optional(),
   companyId: z.number().int(),
   salesmanId: z.number().int(),
-  scheduledAt: z.string().min(4),
+  scheduledAt: z.string().min(4).refine(isValidDateTime, 'Not a valid date and time'),
   durationMin: z.number().int().min(5).max(480).default(30),
   mode: z.enum(['onsite', 'call', 'video']).default('onsite'),
   location: z.string().nullable().optional(),
@@ -481,8 +481,8 @@ workRouter.patch(
     const id = intParam(req.params.id);
     const patch = parseBody(
       z.object({
-        scheduledAt: z.string().optional(),
-        durationMin: z.number().int().optional(),
+        scheduledAt: z.string().refine(isValidDateTime, 'Not a valid date and time').optional(),
+        durationMin: z.number().int().min(5).max(480).optional(),
         mode: z.enum(['onsite', 'call', 'video']).optional(),
         location: z.string().nullable().optional(),
         status: z.enum(['proposed', 'scheduled', 'held', 'no_show', 'cancelled', 'rescheduled']).optional(),
@@ -559,7 +559,9 @@ const feedbackInput = z.object({
   sampleRequested: z.boolean().default(false),
   sampleLines: z.array(z.object({ productId: z.number().int(), qty: z.number().positive() })).default([]),
   dealValue: z.number().nonnegative().nullable().optional(),
-  nextStepOn: z.string().nullable().optional(),
+  // Written straight to company.follow_up_on, which the 08:30 sweep compares as
+  // a plain date string — anything else silently never comes back round.
+  nextStepOn: z.string().refine(isValidDateOnly, 'Use a YYYY-MM-DD date').nullable().optional(),
   metContact: z.string().nullable().optional(),
   actorId: z.number().int().optional(),
 });

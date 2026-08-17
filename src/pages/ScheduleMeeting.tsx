@@ -48,6 +48,13 @@ export function ScheduleMeeting({
   const slot = date && time ? `${date}T${time}:00+05:00` : null;
   const activeDay = data?.days.find((d) => d.date === date);
 
+  // Today in the browser's own timezone. `toISOString()` would give the UTC
+  // date, which in PKT is yesterday for the first five hours of every morning.
+  const todayLocal = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
   // The slot feed still knows what the salesman already has booked, so a free
   // time entry can warn about a clash without forbidding it.
   const clash = Boolean(
@@ -125,7 +132,7 @@ export function ScheduleMeeting({
                 type="date"
                 className="input"
                 value={date}
-                min={new Date().toISOString().slice(0, 10)}
+                min={todayLocal}
                 onChange={(e) => setDate(e.target.value)}
               />
             </Field>
@@ -155,7 +162,12 @@ export function ScheduleMeeting({
             {activeDay && (
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
                 {activeDay.slots.map((s) => {
-                  const hhmm = new Date(s.iso).toTimeString().slice(0, 5);
+                  /* Read the clock time straight out of the server's ISO string
+                   * (…T15:00:00+05:00). Going via `new Date()` would re-render it
+                   * in the browser's own timezone, so a slot labelled 3:00 PM
+                   * would write a different time into the field for anyone not
+                   * sitting in PKT — and book the visit at the wrong hour. */
+                  const hhmm = s.iso.slice(11, 16);
                   return (
                     <button
                       key={s.iso}

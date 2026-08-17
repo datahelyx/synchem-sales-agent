@@ -145,6 +145,9 @@ export async function migrate() {
   // ones have already gone out so a 15-minute cron cannot send duplicates.
   await ensureColumn('meeting', 'reminded_day_before_at', 'TEXT');
   await ensureColumn('meeting', 'reminded_hours_before_at', 'TEXT');
+  // The "log the outcome" nudge repeats until feedback exists, so it needs the
+  // same guard — without it the sweep sent one every 15 minutes, forever.
+  await ensureColumn('meeting', 'feedback_nudged_at', 'TEXT');
   await ensureColumn('meeting', 'agreed_with_contact', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('meeting', 'ics_sequence', 'INTEGER NOT NULL DEFAULT 0');
   // Google Calendar event id, so a reschedule patches the same event rather

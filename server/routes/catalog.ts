@@ -60,6 +60,13 @@ catalogRouter.patch(
     const before = await db.prepare('SELECT * FROM product WHERE id = ?').get(id) as any;
     if (!before) throw new HttpError(404, 'Product not found');
 
+    // SKU is unique in the schema; without this the constraint surfaces as a
+    // raw driver error instead of something the form can show the user.
+    if (patch.sku && patch.sku !== before.sku) {
+      const clash = await db.prepare('SELECT id FROM product WHERE sku = ? AND id <> ?').get(patch.sku, id);
+      if (clash) throw new HttpError(409, `SKU ${patch.sku} is already used by another product`);
+    }
+
     const sets: string[] = [];
     const params: any[] = [];
     for (const [k, v] of Object.entries(patch)) {

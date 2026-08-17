@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { runFollowUpSweep, runReminderSweep, runWeeklyAssignment } from '../agent/assignment.js';
-import { db } from '../db/index.js';
+import { db, tx } from '../db/index.js';
 import { nextWeekStart, weekLabel, weekStart } from '../lib/dates.js';
 import { asyncRoute, HttpError, intParam, parseBody } from '../lib/http.js';
 import { importCompanies } from '../services/importer.js';
@@ -79,10 +79,15 @@ agentRouter.get(
   asyncRoute(async (_req, res) => {
     const week = weekStart();
     const salesmen = await db.prepare(`SELECT * FROM salesman WHERE active = 1 AND role = 'salesman'`).all() as any[];
-    const perSalesman = salesmen.map(async (s) => {
-      const assigned = (await db.prepare('SELECT COUNT(*) AS n FROM assignment WHERE salesman_id = ? AND week_start = ?').get(s.id, week) as any).n;
-      return { id: s.id, name: s.name, quota: s.weekly_quota, assigned, short: Math.max(0, s.weekly_quota - assigned) };
-    });
+    // Each row needs its own count query; without Promise.all this serialises
+    // into an array of pending promises and the UI renders empty rows.
+    const perSalesman = await Promise.all(
+      salesmen.map(async (s) => {
+        const assigned = (await db.prepare('SELECT COUNT(*) AS n FROM assignment WHERE salesman_id = ? AND week_start = ?').get(s.id, week) as any).n;
+        const quota = s.weekly_quota ?? 0;
+        return { id: s.id, name: s.name, quota, assigned, short: Math.max(0, quota - assigned) };
+      }),
+    );
     const pool = (await db.prepare(
       `SELECT COUNT(*) AS n FROM company
         WHERE do_not_contact = 0 AND stage NOT IN ('won','lost')
@@ -156,13 +161,17 @@ agentRouter.get(
 
 agentRouter.put(
   '/settings',
-  asyncRoute((req, res) => {
+  asyncRoute(async (req, res) => {
     const body = parseBody(z.record(z.string()), req.body);
     const stmt = db.prepare(
       `INSERT INTO setting (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
     );
-    for (const [k, v] of Object.entries(body)) stmt.run(k, v);
+    // Awaited so a failed write surfaces as a 500 rather than being swallowed,
+    // and so the response only goes out once the setting is actually committed.
+    await tx(async () => {
+      for (const [k, v] of Object.entries(body)) await stmt.run(k, v);
+    });
     res.json(body);
   }),
 );

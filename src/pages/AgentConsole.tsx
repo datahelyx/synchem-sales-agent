@@ -56,7 +56,7 @@ export function AgentConsole() {
         <h1 className="text-xl font-semibold text-slate-900">Agent</h1>
         <p className="mt-0.5 text-sm text-slate-500">
           {status.cronEnabled
-            ? 'Running on schedule: assignments Monday 09:00, reminders 18:00, follow-ups 08:30 (Asia/Karachi).'
+            ? 'Running on schedule: assignments Monday 09:00, reminders every 15 minutes, follow-ups 08:30 (Asia/Karachi).'
             : 'Scheduled runs are switched off (AGENT_CRON=off) — trigger them by hand below.'}
         </p>
       </div>
